@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 
 <!-- 順番スロット -->
-<html class="transient-viewport-boot-painting" data-app-version="8.0.102" lang="ja">
+<html class="transient-viewport-boot-painting" data-app-version="8.0.103" lang="ja">
 <head>
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" name="viewport"/>
@@ -5964,6 +5964,14 @@ html body .slot-view .main-button-slot {
   min-height: 0;
   gap: 0;
   overflow: visible;
+}
+
+/* PLAY controls can move between rapid taps, exposing the non-interactive
+   stage beneath them as the second native hit target. Keep double-tap zoom
+   suppression continuous at the direct hit target, not only at ancestors. */
+html body #slotView .stage,
+html body #slotView .stage * {
+  touch-action: manipulation;
 }
 
 html body #slotView .stage > .stage-visual {

@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 
 <!-- 順番スロット -->
-<html class="transient-viewport-boot-painting" data-app-version="8.0.107" lang="ja">
+<html class="transient-viewport-boot-painting" data-app-version="8.0.108" lang="ja">
 <head>
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" name="viewport"/>
@@ -8428,7 +8428,78 @@ html body #slotView #slotCard.interaction-locked:not(.selection-emphasis) {
 html.keyboard-navigation body #editorSection :is(.participant-card .participant-remove,.number-editor-card .number-remove-button):focus-visible {
   outline: var(--focus-ring-width) solid var(--focus-ring) !important;
   outline-offset: 3px !important;
-}</style>
+}
+
+/* CP68: while iPadOS Chrome exposes a landscape LayoutViewport but keeps the
+   portrait VisualViewport after Fullscreen exit, keep every app-owned surface
+   in the same portrait coordinate space as the verified logical shell. This
+   class is activated only by the exact orientation-conflict verifier and is
+   removed by that verifier's existing cleanup paths. */
+html.fullscreen-exit-orientation-conflict-shell body {
+  width: var(--app-width);
+  height: var(--app-coordinate-height);
+}
+
+html.fullscreen-exit-orientation-conflict-shell body #appRoot :where(
+    .toast,
+    .menu-popover,
+    .menu-dismiss-layer,
+    .modal-backdrop,
+    .title-version,
+    .modal-handoff-scrim,
+    #resultsModal .result-viewer
+  ) {
+  position: absolute;
+}
+
+html.fullscreen-exit-orientation-conflict-shell body .setup-view {
+  padding-left: max(21px, env(safe-area-inset-left, 0px));
+  padding-right: max(21px, env(safe-area-inset-right, 0px));
+}
+
+html.fullscreen-exit-orientation-conflict-shell body .setup-view.showing-title .title-screen {
+  grid-template-columns: 1fr;
+  grid-template-rows: auto auto;
+  align-items: normal;
+  align-content: center;
+  justify-content: normal;
+  justify-items: center;
+  gap: 34px;
+  min-height: max(var(--app-height), 620px);
+  width: max(100%, var(--title-portrait-min-size));
+  min-width: var(--title-portrait-min-size);
+  padding-top: max(22px, env(safe-area-inset-top));
+  padding-right: var(--title-edge-space);
+  padding-bottom: max(22px, env(safe-area-inset-bottom));
+  padding-left: var(--title-edge-space);
+}
+
+html.fullscreen-exit-orientation-conflict-shell body #resetModal .reset-modal-box {
+  width: min(480px, calc(var(--app-width) - 24px));
+}
+
+html.fullscreen-exit-orientation-conflict-shell body #editorStartRow {
+  grid-template-columns: minmax(0, 1fr) !important;
+  grid-template-rows: auto auto;
+  row-gap: 14px !important;
+}
+
+html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > :is(
+    #registrationNotes:not([hidden]),
+    #numberRegistrationNotes:not([hidden])
+  ) {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn {
+  grid-column: 1 !important;
+  grid-row: 2 !important;
+  width: 100%;
+  max-width: none;
+  justify-self: stretch;
+}
+</style>
 </head>
 <body>
 <div aria-hidden="true" id="transientViewportBackdrop"></div>
@@ -9806,6 +9877,9 @@ html.keyboard-navigation body #editorSection :is(.participant-card .participant-
     const bodyStyle = body ? getComputedStyle(body) : null;
     const appRootRect = appRoot.getBoundingClientRect();
     const bodyRect = body?.getBoundingClientRect() || null;
+    const visibleModal = Array.from(appRoot.querySelectorAll(".modal-backdrop"))
+      .find(modal => !modal.hidden) || null;
+    const visibleModalBox = visibleModal?.querySelector(".modal-box, .completion-menu-box") || null;
     const topGap = bodyRect ? diagnosticNumber(appRootRect.top - bodyRect.top) : null;
     const transientPaintOwnsBackground = root.classList.contains("transient-viewport-painting")
       || root.classList.contains("transient-viewport-boot-painting");
@@ -9858,6 +9932,19 @@ html.keyboard-navigation body #editorSection :is(.participant-card .participant-
       appRoot: diagnosticRect(appRoot),
       transientViewportBackdrop: diagnosticRect(transientViewportBackdrop),
       activeView: diagnosticRect(diagnosticActiveView()),
+      appOwnedSurfaceRects: {
+        visibleModal: visibleModal ? {
+          id: visibleModal.id || null,
+          position: getComputedStyle(visibleModal).position,
+          rect: diagnosticRect(visibleModal)
+        } : null,
+        visibleModalBox: visibleModalBox ? diagnosticRect(visibleModalBox) : null,
+        titleScreen: state.screen === Screen.TITLE ? diagnosticRect(introSection) : null,
+        titleVersion: state.screen === Screen.TITLE ? {
+          position: getComputedStyle(titleVersion).position,
+          rect: diagnosticRect(titleVersion)
+        } : null
+      },
       transientPaintBackgroundOwnership: {
         owner: transientPaintOwnsBackground
           ? "transient-viewport-backdrop"
@@ -9881,6 +9968,12 @@ html.keyboard-navigation body #editorSection :is(.participant-card .participant-
       coordinateOwnership: {
         owner: "body",
         playRootLocked: root.classList.contains("play-root-locked"),
+        fullscreenExitOrientationConflictShell: root.classList.contains(
+          "fullscreen-exit-orientation-conflict-shell"
+        ),
+        cssMediaOrientation: matchMedia("(orientation: portrait)").matches
+          ? "portrait"
+          : "landscape",
         html: diagnosticCoordinateStyle(root),
         body: diagnosticCoordinateStyle(body),
         appRoot: diagnosticCoordinateStyle(appRoot),
@@ -10225,6 +10318,13 @@ html.keyboard-navigation body #editorSection :is(.participant-card .participant-
     persistViewportDiagnostics();
     await flushViewportDiagnosticPendingEvents();
     persistViewportDiagnosticEnvelope();
+    // A full diagnostic entry can synchronously trigger a lightweight nested
+    // entry while its snapshot is still being assembled. Sequence allocation
+    // remains authoritative, so normalize only the exported copy instead of
+    // treating array insertion order as event order.
+    const exportedEvents = [...viewportDiagnosticEvents].sort(
+      (left, right) => Number(left.sequence) - Number(right.sequence)
+    );
     return JSON.stringify({
       app: "順番スロット",
       version: APP_VERSION,
@@ -10235,11 +10335,11 @@ html.keyboard-navigation body #editorSection :is(.participant-card .participant-
         startedAtEpoch: viewportDiagnosticRun.startedAtEpoch,
         updatedAtEpoch: Date.now(),
         pageCount: viewportDiagnosticRun.pageCount,
-        eventCount: viewportDiagnosticEvents.length,
+        eventCount: exportedEvents.length,
         eventSequence: viewportDiagnosticRun.eventSequence,
         exportGeneration,
-        firstSequence: viewportDiagnosticEvents[0]?.sequence || null,
-        lastSequence: viewportDiagnosticEvents[viewportDiagnosticEvents.length - 1]?.sequence || null,
+        firstSequence: exportedEvents[0]?.sequence || null,
+        lastSequence: exportedEvents[exportedEvents.length - 1]?.sequence || null,
         currentPage: {
           pageId: viewportDiagnosticPageId,
           pageSequence: viewportDiagnosticPageSequence,
@@ -10259,7 +10359,7 @@ html.keyboard-navigation body #editorSection :is(.participant-card .participant-
         availHeight: screen.availHeight,
         pixelRatio: window.devicePixelRatio
       },
-      events: viewportDiagnosticEvents
+      events: exportedEvents
     }, null, 2);
   }
 
@@ -15009,6 +15109,7 @@ html.keyboard-navigation body #editorSection :is(.participant-card .participant-
       conflictingSource: observation.conflictingSource,
       activatedAt: performance.now()
     };
+    document.documentElement.classList.add("fullscreen-exit-orientation-conflict-shell");
     recordViewportDiagnostic("fullscreen-exit-orientation-conflict-shell-preserved", {
       target: { ...observation.target },
       targetOrientation: observation.targetOrientation,
@@ -15026,6 +15127,7 @@ html.keyboard-navigation body #editorSection :is(.participant-card .participant-
     const conflict = fullscreenExitOrientationConflict;
     if (!conflict) return false;
     fullscreenExitOrientationConflict = null;
+    document.documentElement.classList.remove("fullscreen-exit-orientation-conflict-shell");
     recordViewportDiagnostic("fullscreen-exit-orientation-conflict-cleared", {
       reason,
       target: { ...conflict.viewport },

@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "kind": "production-deployment",
+  "source": {
+    "repository": "zanzarame/order-slot-dev",
+    "commit": "75f4f9c2c7021b081a335802a93290cc5865f39a",
+    "path": "app/順番スロット_v8.0.100.html",
+    "version": "8.0.100",
+    "gitBlob": "bd23bed698b6c7852a85cfbccf03604c9ec71e60",
+    "sha256": "7F70BA0A6126EE218CB831032B4783FD48C2A778A8050BD346054A285BBC60F3",
+    "bytes": 818385
+  },
+  "public": {
+    "repository": "zanzarame/order-slot",
+    "path": "index.html",
+    "gitBlob": "bd23bed698b6c7852a85cfbccf03604c9ec71e60",
+    "sha256": "7F70BA0A6126EE218CB831032B4783FD48C2A778A8050BD346054A285BBC60F3",
+    "bytes": 818385,
+    "deployedByCommit": "cab3629d697e7b8a1e3bfbd3ab59f47074cb9543"
+  },
+  "approval": {
+    "reference": "https://github.com/zanzarame/order-slot-dev/issues/14",
+    "note": "Manifest bootstrap for the pre-existing v8.0.100 production deployment; root index.html is unchanged."
+  },
+  "privacy": {
+    "realParticipantDataIncluded": false,
+    "diagnosticLogsIncluded": false,
+    "credentialsIncluded": false,
+    "unapprovedSecretsIncluded": false,
+    "reviewed": true
+  }
+}

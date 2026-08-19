@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 
 <!-- 順番スロット -->
-<html class="transient-viewport-boot-painting" data-app-version="8.0.103" lang="ja">
+<html class="transient-viewport-boot-painting" data-app-version="8.0.104" lang="ja">
 <head>
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" name="viewport"/>
@@ -21099,14 +21099,27 @@ function scheduleTickSequence(stepIntervals) {
       }
       const touch = event.touches[0];
       const target = event.target instanceof Element ? event.target : null;
+      const now = performance.now();
+      const previous = lastTap;
+      const interval = previous ? now - previous.at : null;
+      const distance = previous
+        ? Math.hypot(touch.clientX - previous.x, touch.clientY - previous.y)
+        : null;
+      const closeInTime = previous && interval <= DOUBLE_TAP_GUARD_MS;
+      const closeInSpace = previous && distance <= DOUBLE_TAP_GUARD_DISTANCE_PX;
+      const nativeTextGesture = isNativeTextGestureTarget(target);
+      const shouldBlockAtStart = Boolean(closeInTime && closeInSpace && !nativeTextGesture);
+      const defaultPreventedBefore = event.defaultPrevented;
+      if (shouldBlockAtStart && event.cancelable) event.preventDefault();
       tapCandidate = {
         x: touch.clientX,
         y: touch.clientY,
         identifier: touch.identifier,
-        startedAt: performance.now(),
+        startedAt: now,
         target: describeGestureTarget(target),
         path: describeGesturePath(event),
-        nativeTextGesture: isNativeTextGestureTarget(target),
+        nativeTextGesture,
+        blockedAtTouchStart: shouldBlockAtStart && event.defaultPrevented,
         moved: false
       };
       recordViewportDiagnostic("double-tap-input-touchstart", {
@@ -21114,12 +21127,37 @@ function scheduleTickSequence(stepIntervals) {
         touch: describeTouch(touch),
         touchCount: event.touches.length,
         nativeTextGesture: tapCandidate.nativeTextGesture,
-        previousTap: lastTap ? {
-          ageMs: Math.round(performance.now() - lastTap.at),
-          distance: diagnosticNumber(Math.hypot(touch.clientX - lastTap.x, touch.clientY - lastTap.y)),
-          target: lastTap.target
-        } : null
+        previousTap: previous ? {
+          ageMs: Math.round(interval),
+          distance: diagnosticNumber(distance),
+          target: previous.target
+        } : null,
+        closeInTime: Boolean(closeInTime),
+        closeInSpace: Boolean(closeInSpace),
+        defaultPreventedBefore,
+        defaultPreventedAfter: event.defaultPrevented,
+        preventDefaultCalled: Boolean(shouldBlockAtStart && event.cancelable)
       });
+      if (shouldBlockAtStart) {
+        // Safari 26.6 can begin native double-tap zoom after a canceled second
+        // touchend even when every hit target declares `manipulation`. Consume
+        // the second touch at its start so the native recognizer sees the guard
+        // before it can commit the gesture; keep the touchend guard as fallback.
+        recordViewportDiagnostic("double-tap-gesture-blocked", {
+          target: target ? (target.id || target.tagName?.toLowerCase?.() || null) : null,
+          interval: Math.round(interval),
+          distance: diagnosticNumber(distance),
+          cancelable: event.cancelable,
+          defaultPreventedBefore,
+          defaultPreventedAfter: event.defaultPrevented,
+          preventDefaultCalled: Boolean(event.cancelable),
+          startTarget: tapCandidate.target,
+          previousTarget: previous.target,
+          changedTouches: Array.from(event.changedTouches || []).map(describeTouch),
+          path: tapCandidate.path,
+          source: "touchstart"
+        });
+      }
     };
     const trackTapMovement = event => {
       if (event.touches?.length !== 1) {
@@ -21169,11 +21207,12 @@ function scheduleTickSequence(stepIntervals) {
       const defaultPreventedBefore = event.defaultPrevented;
       const preventDefaultCalled = Boolean(closeInTime && closeInSpace && event.cancelable);
       if (closeInTime && closeInSpace) {
-        // WebKit decides double-tap zoom when the second tap completes. Consume
-        // that touchend only; touchstart remains passive so scrolling, pointer
-        // handling and normal single-tap activation keep their existing behavior.
+        // Retain a touchend fallback for non-cancelable or otherwise ineffective
+        // touchstart cancellation and for older event-order implementations.
         if (event.cancelable) event.preventDefault();
-        recordViewportDiagnostic("double-tap-gesture-blocked", {
+        recordViewportDiagnostic(current.blockedAtTouchStart
+          ? "double-tap-input-touchend-after-start-guard"
+          : "double-tap-gesture-blocked", {
           target: event.target instanceof Element
             ? (event.target.id || event.target.tagName?.toLowerCase?.() || null)
             : null,
@@ -21187,7 +21226,7 @@ function scheduleTickSequence(stepIntervals) {
           previousTarget: previous.target,
           changedTouches: Array.from(event.changedTouches || []).map(describeTouch),
           path: describeGesturePath(event),
-          source: "touchend"
+          source: current.blockedAtTouchStart ? "touchend-after-touchstart" : "touchend"
         });
         lastTap = null;
         return;
@@ -21217,7 +21256,7 @@ function scheduleTickSequence(stepIntervals) {
       lastTap = null;
     };
     const blockDoubleTapZoom = event => {
-      // Late fallback only. Normally `manipulation` or the second-touchend
+      // Late fallback only. Normally `manipulation` or the second-touchstart
       // guard above owns the gesture before dblclick is synthesized.
       const defaultPreventedBefore = event.defaultPrevented;
       if (event.cancelable) event.preventDefault();
@@ -21238,7 +21277,7 @@ function scheduleTickSequence(stepIntervals) {
     document.addEventListener("pointerdown", recordCompatibilityInput, { passive: true, capture: true });
     document.addEventListener("pointerup", recordCompatibilityInput, { passive: true, capture: true });
     document.addEventListener("click", recordCompatibilityInput, { passive: true, capture: true });
-    document.addEventListener("touchstart", beginTapCandidate, { passive: true, capture: true });
+    document.addEventListener("touchstart", beginTapCandidate, { passive: false, capture: true });
     document.addEventListener("touchmove", trackTapMovement, { passive: true, capture: true });
     document.addEventListener("touchend", finishTapCandidate, { passive: false, capture: true });
     document.addEventListener("touchcancel", cancelTapCandidate, { passive: true, capture: true });

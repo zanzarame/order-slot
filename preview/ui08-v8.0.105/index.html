@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 
 <!-- 順番スロット -->
-<html class="transient-viewport-boot-painting" data-app-version="8.0.104" lang="ja">
+<html class="transient-viewport-boot-painting" data-app-version="8.0.105" lang="ja">
 <head>
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" name="viewport"/>
@@ -5966,12 +5966,13 @@ html body .slot-view .main-button-slot {
   overflow: visible;
 }
 
-/* PLAY controls can move between rapid taps, exposing the non-interactive
-   stage beneath them as the second native hit target. Keep double-tap zoom
-   suppression continuous at the direct hit target, not only at ancestors. */
+/* PLAY controls can move between rapid taps, exposing the non-scrollable stage
+   beneath them as the second native hit target. This subtree uses app-owned
+   pointer gestures, so disable native pan/zoom recognition continuously at
+   the direct hit target instead of relying on `manipulation` timing alone. */
 html body #slotView .stage,
 html body #slotView .stage * {
-  touch-action: manipulation;
+  touch-action: none;
 }
 
 html body #slotView .stage > .stage-visual {
@@ -10152,6 +10153,41 @@ html.keyboard-navigation body #editorSection :is(.participant-card .participant-
         transition: state.fullscreenTransition
       },
       shadowExpected: shadowSnapshot(),
+      extra
+    };
+    viewportDiagnosticEvents.push(entry);
+    viewportDiagnosticPendingEvents.push(entry);
+    viewportDiagnosticRun.lastRunT = viewportDiagnosticLastRunT;
+    scheduleViewportDiagnosticPersistence();
+  }
+
+  function recordLightweightDiagnostic(eventName, extra = null) {
+    const visual = window.visualViewport;
+    const pageT = diagnosticNumber(performance.now() - viewportDiagnosticPageStartedAt);
+    const runT = diagnosticNumber(Math.max(
+      viewportDiagnosticLastRunT,
+      viewportDiagnosticPageRunOffset + (Number(pageT) || 0)
+    ));
+    viewportDiagnosticLastRunT = Number(runT) || viewportDiagnosticLastRunT;
+    const entry = {
+      runId: viewportDiagnosticRun.runId,
+      sequence: ++viewportDiagnosticRun.eventSequence,
+      runT,
+      pageId: viewportDiagnosticPageId,
+      pageSequence: viewportDiagnosticPageSequence,
+      pageT,
+      capturedAtEpoch: Date.now(),
+      t: pageT,
+      event: eventName,
+      screen: state.screen,
+      inner: [diagnosticNumber(window.innerWidth), diagnosticNumber(window.innerHeight)],
+      windowScroll: [diagnosticNumber(window.scrollX), diagnosticNumber(window.scrollY)],
+      visualViewport: visual ? {
+        size: [diagnosticNumber(visual.width), diagnosticNumber(visual.height)],
+        offset: [diagnosticNumber(visual.offsetLeft), diagnosticNumber(visual.offsetTop)],
+        page: [diagnosticNumber(visual.pageLeft), diagnosticNumber(visual.pageTop)],
+        scale: diagnosticNumber(visual.scale)
+      } : null,
       extra
     };
     viewportDiagnosticEvents.push(entry);
@@ -17484,7 +17520,7 @@ html.keyboard-navigation body #editorSection :is(.participant-card .participant-
       const featherStyle = getComputedStyle(slotVisualFeather);
       const effectRect = slotVisualEffect.getBoundingClientRect();
       const maskRect = slotVisualMask.getBoundingClientRect();
-      recordViewportDiagnostic("spin-visual-composite", {
+      recordLightweightDiagnostic("spin-visual-composite", {
         stage,
         filter: effectStyle.filter,
         featherBackground: featherStyle.backgroundImage || null,
@@ -21009,7 +21045,6 @@ function scheduleTickSequence(stepIntervals) {
 
     const describeGestureTarget = target => {
       if (!(target instanceof Element)) return null;
-      const style = getComputedStyle(target);
       return {
         tag: target.tagName?.toLowerCase?.() || null,
         id: target.id || null,
@@ -21017,10 +21052,7 @@ function scheduleTickSequence(stepIntervals) {
         role: target.getAttribute("role"),
         connected: target.isConnected,
         hidden: target instanceof HTMLElement ? target.hidden : null,
-        inert: target instanceof HTMLElement ? target.inert : null,
-        touchAction: style.touchAction,
-        pointerEvents: style.pointerEvents,
-        overflow: [style.overflowX, style.overflowY]
+        inert: target instanceof HTMLElement ? target.inert : null
       };
     };
     const describeGesturePath = event => {
@@ -21038,17 +21070,22 @@ function scheduleTickSequence(stepIntervals) {
       radius: [Math.round(touch.radiusX || 0), Math.round(touch.radiusY || 0)],
       force: diagnosticNumber(touch.force)
     } : null;
-    const describeInputEvent = event => ({
-      eventType: event.type,
-      eventTimeStamp: diagnosticNumber(event.timeStamp),
-      cancelable: event.cancelable,
-      defaultPrevented: event.defaultPrevented,
-      target: describeGestureTarget(event.target),
-      path: describeGesturePath(event)
-    });
+    const describeInputEvent = event => {
+      const handlerTimeStamp = performance.now();
+      return {
+        eventType: event.type,
+        eventTimeStamp: diagnosticNumber(event.timeStamp),
+        handlerTimeStamp: diagnosticNumber(handlerTimeStamp),
+        handlerLagMs: diagnosticNumber(handlerTimeStamp - Number(event.timeStamp)),
+        cancelable: event.cancelable,
+        defaultPrevented: event.defaultPrevented,
+        target: describeGestureTarget(event.target),
+        path: describeGesturePath(event)
+      };
+    };
     const recordCompatibilityInput = event => {
       if ("pointerType" in event && event.pointerType && event.pointerType !== "touch") return;
-      recordViewportDiagnostic(`double-tap-input-${event.type}`, {
+      recordLightweightDiagnostic(`double-tap-input-${event.type}`, {
         ...describeInputEvent(event),
         detail: Number(event.detail) || 0,
         pointerId: Number.isFinite(event.pointerId) ? event.pointerId : null,
@@ -21063,7 +21100,7 @@ function scheduleTickSequence(stepIntervals) {
       if (event.touches?.length <= 1) return;
       const defaultPreventedBefore = event.defaultPrevented;
       if (event.cancelable) event.preventDefault();
-      recordViewportDiagnostic("double-tap-input-multitouch-blocked", {
+      recordLightweightDiagnostic("double-tap-input-multitouch-blocked", {
         ...describeInputEvent(event),
         defaultPreventedBefore,
         defaultPreventedAfter: event.defaultPrevented,
@@ -21074,7 +21111,7 @@ function scheduleTickSequence(stepIntervals) {
     const blockGestureEvent = event => {
       const defaultPreventedBefore = event.defaultPrevented;
       if (event.cancelable) event.preventDefault();
-      recordViewportDiagnostic("double-tap-input-gesture-blocked", {
+      recordLightweightDiagnostic("double-tap-input-gesture-blocked", {
         ...describeInputEvent(event),
         defaultPreventedBefore,
         defaultPreventedAfter: event.defaultPrevented,
@@ -21087,7 +21124,7 @@ function scheduleTickSequence(stepIntervals) {
     );
     const beginTapCandidate = event => {
       if (event.touches?.length !== 1) {
-        recordViewportDiagnostic("double-tap-input-touchstart-rejected", {
+        recordLightweightDiagnostic("double-tap-input-touchstart-rejected", {
           ...describeInputEvent(event),
           reason: "touch-count",
           touchCount: event.touches?.length || 0,
@@ -21122,7 +21159,7 @@ function scheduleTickSequence(stepIntervals) {
         blockedAtTouchStart: shouldBlockAtStart && event.defaultPrevented,
         moved: false
       };
-      recordViewportDiagnostic("double-tap-input-touchstart", {
+      recordLightweightDiagnostic("double-tap-input-touchstart", {
         ...describeInputEvent(event),
         touch: describeTouch(touch),
         touchCount: event.touches.length,
@@ -21139,11 +21176,11 @@ function scheduleTickSequence(stepIntervals) {
         preventDefaultCalled: Boolean(shouldBlockAtStart && event.cancelable)
       });
       if (shouldBlockAtStart) {
-        // Safari 26.6 can begin native double-tap zoom after a canceled second
-        // touchend even when every hit target declares `manipulation`. Consume
-        // the second touch at its start so the native recognizer sees the guard
-        // before it can commit the gesture; keep the touchend guard as fallback.
-        recordViewportDiagnostic("double-tap-gesture-blocked", {
+        // A canceled second touchend was insufficient in Safari, and a canceled
+        // second touchstart plus touchend was later insufficient in Chrome.
+        // Consume both boundaries as event-level fallbacks to the stage's
+        // `touch-action: none`; keep the touchend guard for older event orders.
+        recordLightweightDiagnostic("double-tap-gesture-blocked", {
           target: target ? (target.id || target.tagName?.toLowerCase?.() || null) : null,
           interval: Math.round(interval),
           distance: diagnosticNumber(distance),
@@ -21172,7 +21209,7 @@ function scheduleTickSequence(stepIntervals) {
         touch.clientY - tapCandidate.y
       ) > DOUBLE_TAP_GUARD_DISTANCE_PX) {
         tapCandidate.moved = true;
-        recordViewportDiagnostic("double-tap-input-touchmove-threshold", {
+        recordLightweightDiagnostic("double-tap-input-touchmove-threshold", {
           ...describeInputEvent(event),
           touch: describeTouch(touch),
           startTarget: tapCandidate.target,
@@ -21187,7 +21224,7 @@ function scheduleTickSequence(stepIntervals) {
       const current = tapCandidate;
       tapCandidate = null;
       if (!current || current.moved || current.nativeTextGesture) {
-        recordViewportDiagnostic("double-tap-input-touchend-rejected", {
+        recordLightweightDiagnostic("double-tap-input-touchend-rejected", {
           ...describeInputEvent(event),
           reason: !current ? "missing-candidate" : current.moved ? "moved" : "native-text-gesture",
           changedTouches: Array.from(event.changedTouches || []).map(describeTouch),
@@ -21210,7 +21247,7 @@ function scheduleTickSequence(stepIntervals) {
         // Retain a touchend fallback for non-cancelable or otherwise ineffective
         // touchstart cancellation and for older event-order implementations.
         if (event.cancelable) event.preventDefault();
-        recordViewportDiagnostic(current.blockedAtTouchStart
+        recordLightweightDiagnostic(current.blockedAtTouchStart
           ? "double-tap-input-touchend-after-start-guard"
           : "double-tap-gesture-blocked", {
           target: event.target instanceof Element
@@ -21231,7 +21268,7 @@ function scheduleTickSequence(stepIntervals) {
         lastTap = null;
         return;
       }
-      recordViewportDiagnostic("double-tap-input-touchend", {
+      recordLightweightDiagnostic("double-tap-input-touchend", {
         ...describeInputEvent(event),
         touchDuration: Math.round(now - current.startedAt),
         changedTouches: Array.from(event.changedTouches || []).map(describeTouch),
@@ -21247,7 +21284,7 @@ function scheduleTickSequence(stepIntervals) {
       lastTap = { at: now, x: current.x, y: current.y, target: current.target };
     };
     const cancelTapCandidate = event => {
-      recordViewportDiagnostic("double-tap-input-touchcancel", {
+      recordLightweightDiagnostic("double-tap-input-touchcancel", {
         ...describeInputEvent(event),
         changedTouches: Array.from(event.changedTouches || []).map(describeTouch),
         startTarget: tapCandidate?.target || null
@@ -21256,11 +21293,11 @@ function scheduleTickSequence(stepIntervals) {
       lastTap = null;
     };
     const blockDoubleTapZoom = event => {
-      // Late fallback only. Normally `manipulation` or the second-touchstart
-      // guard above owns the gesture before dblclick is synthesized.
+      // Late fallback only. Normally the stage's `touch-action: none` or the
+      // second-touchstart guard owns the gesture before dblclick is synthesized.
       const defaultPreventedBefore = event.defaultPrevented;
       if (event.cancelable) event.preventDefault();
-      recordViewportDiagnostic("double-tap-zoom-blocked", {
+      recordLightweightDiagnostic("double-tap-zoom-blocked", {
         target: event.target instanceof Element
           ? (event.target.id || event.target.tagName?.toLowerCase?.() || null)
           : null,

@@ -4,8 +4,8 @@
   "source": {
     "repository": "zanzarame/order-slot-dev",
     "pullRequest": 45,
-    "commit": "e5ee919e12ef8e363d1c4177a3a0f40992836cf2",
-    "path": "app/diagnostics/順番スロット_v8.0.111.html",
+    "commit": "e50605cb54b091b49a6d95e4f5cd7580a631c2a7",
+    "path": "app/順番スロット_v8.0.111.html",
     "version": "8.0.111",
     "gitBlob": "9a670f23319fba6e9640dbdfaad2f6eed46330d1",
     "sha256": "775E21B55004B206D6E09CF21A050C52351855E87AA0334EEB6D8F6B9319FA82",

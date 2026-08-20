@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 
 <!-- 順番スロット -->
-<html class="transient-viewport-boot-painting" data-app-version="8.0.115" lang="ja">
+<html class="transient-viewport-boot-painting" data-app-version="8.0.116" lang="ja">
 <head>
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" name="viewport"/>
@@ -8787,8 +8787,6 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
   // Configuration
   // ---------------------------------------------------------------------------
   const APP_VERSION = document.documentElement.dataset.appVersion || "";
-  const CP60_DIAGNOSTIC_ENABLED = new URLSearchParams(location.search)
-    .get("cp60-diagnostic") === "passive";
   const MAX_PARTICIPANTS = 40;
   const NUMBER_RANGE_MIN = 2;
   const NUMBER_RANGE_MAX = 40;
@@ -9053,240 +9051,6 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
   const numberRangeInput = $("numberRangeInput");
   const createNumbersBtn = $("createNumbersBtn");
   const numberGrid = $("numberGrid");
-
-
-  // Issue #65 / CP60 target-only passive diagnostics. During the target
-  // transition this recorder stores only values the product path has already
-  // read; it does not add geometry/style reads, timers, or persistence writes.
-  // The complete DOM snapshot is read only when the operator explicitly taps
-  // the log button after the five-second pass/fail observation is finished.
-  const CP60_DIAGNOSTIC_SCHEMA_VERSION = 1;
-  const CP60_DIAGNOSTIC_MAX_EVENTS = 240;
-  const cp60DiagnosticPageStartedAt = performance.now();
-  const cp60DiagnosticRun = CP60_DIAGNOSTIC_ENABLED ? {
-    schemaVersion: CP60_DIAGNOSTIC_SCHEMA_VERSION,
-    appVersion: APP_VERSION,
-    mode: "passive",
-    runId: `cp60-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    startedAtEpoch: Date.now(),
-    userAgent: navigator.userAgent,
-    screen: {
-      width: screen.width,
-      height: screen.height,
-      availWidth: screen.availWidth,
-      availHeight: screen.availHeight,
-      pixelRatio: devicePixelRatio
-    },
-    eventSequence: 0,
-    events: [],
-    finalSnapshot: null
-  } : null;
-
-  function cp60DiagnosticViewport(value) {
-    if (!value) return null;
-    return {
-      width: roundViewportMeasurement(value.width),
-      height: roundViewportMeasurement(value.height)
-    };
-  }
-
-  function recordCp60Diagnostic(name, detail = null) {
-    if (!cp60DiagnosticRun) return;
-    cp60DiagnosticRun.events.push({
-      sequence: ++cp60DiagnosticRun.eventSequence,
-      t: roundViewportMeasurement(performance.now() - cp60DiagnosticPageStartedAt),
-      name,
-      detail
-    });
-    if (cp60DiagnosticRun.events.length > CP60_DIAGNOSTIC_MAX_EVENTS) {
-      cp60DiagnosticRun.events.splice(0,
-        cp60DiagnosticRun.events.length - CP60_DIAGNOSTIC_MAX_EVENTS);
-    }
-  }
-
-  function cp60DiagnosticEligibilitySummary() {
-    const eligibility = postFullscreenWindowedRotationRecoveryEligibility;
-    return eligibility ? {
-      generation: eligibility.generation,
-      exitTarget: cp60DiagnosticViewport(eligibility.exitTarget),
-      exitOrientation: eligibility.exitOrientation,
-      exitReason: eligibility.exitReason,
-      ageMs: roundViewportMeasurement(performance.now() - eligibility.armedAt),
-      lastRecoveryAt: eligibility.lastRecoveryAt === null
-        ? null
-        : roundViewportMeasurement(eligibility.lastRecoveryAt)
-    } : null;
-  }
-
-  function cp60DiagnosticRecoverySummary() {
-    const recovery = postFullscreenWindowedRotationOverflowScrollRecovery;
-    return recovery ? {
-      generation: recovery.generation,
-      experienceGeneration: recovery.experienceGeneration,
-      phase: recovery.phase,
-      target: cp60DiagnosticViewport(recovery.target),
-      orientation: recovery.orientation,
-      source: recovery.source,
-      trigger: recovery.trigger,
-      triggerKind: recovery.triggerKind,
-      lastBlockReason: recovery.lastBlockReason,
-      ageMs: roundViewportMeasurement(performance.now() - recovery.requestedAt),
-      stylesApplied: recovery.stylesApplied
-    } : null;
-  }
-
-  function readCp60DiagnosticFinalSnapshot() {
-    const root = document.documentElement;
-    const body = document.body;
-    const scroller = document.scrollingElement || root;
-    const visual = window.visualViewport;
-    const readStyle = element => {
-      if (!(element instanceof Element)) return null;
-      const style = getComputedStyle(element);
-      return {
-        position: style.position,
-        overflowX: style.overflowX,
-        overflowY: style.overflowY,
-        overscrollBehaviorY: style.overscrollBehaviorY,
-        width: style.width,
-        height: style.height,
-        minHeight: style.minHeight,
-        top: style.top,
-        left: style.left,
-        transform: style.transform
-      };
-    };
-    return {
-      capturedAtEpoch: Date.now(),
-      documentHidden: document.hidden,
-      fullscreen: isFullscreen(),
-      fullscreenTransition: state.fullscreenTransition,
-      appScreen: state.screen,
-      playPhase: state.playPhase,
-      layout: cp60DiagnosticViewport({ width: root.clientWidth, height: root.clientHeight }),
-      visual: visual ? {
-        width: roundViewportMeasurement(visual.width),
-        height: roundViewportMeasurement(visual.height),
-        offsetLeft: roundViewportMeasurement(visual.offsetLeft),
-        offsetTop: roundViewportMeasurement(visual.offsetTop),
-        pageLeft: roundViewportMeasurement(visual.pageLeft),
-        pageTop: roundViewportMeasurement(visual.pageTop),
-        scale: roundViewportMeasurement(visual.scale)
-      } : null,
-      inner: cp60DiagnosticViewport({ width: innerWidth, height: innerHeight }),
-      displayed: cp60DiagnosticViewport(displayedAppViewport),
-      displayedOrientation: displayedViewportOrientation,
-      expected: {
-        portrait: cp60DiagnosticViewport(expectedWindowedViewports.portrait?.viewport),
-        landscape: cp60DiagnosticViewport(expectedWindowedViewports.landscape?.viewport)
-      },
-      verified: {
-        portrait: cp60DiagnosticViewport(verifiedWindowedViewports.portrait?.viewport),
-        landscape: cp60DiagnosticViewport(verifiedWindowedViewports.landscape?.viewport)
-      },
-      browserUiResidual: browserUiViewportResidual ? {
-        viewport: cp60DiagnosticViewport(browserUiViewportResidual.viewport),
-        orientation: browserUiViewportResidual.orientation,
-        visibleGap: roundViewportMeasurement(browserUiViewportResidual.visibleGap),
-        top: roundViewportMeasurement(browserUiViewportResidual.top),
-        bottom: roundViewportMeasurement(browserUiViewportResidual.bottom),
-        source: browserUiViewportResidual.source
-      } : null,
-      browserUiResidualRecovery: browserUiResidualRecovery ? {
-        generation: browserUiResidualRecovery.generation,
-        phase: browserUiResidualRecovery.phase,
-        target: cp60DiagnosticViewport(browserUiResidualRecovery.target),
-        orientation: browserUiResidualRecovery.orientation,
-        holdingOnePxScrollRange: browserUiResidualRecovery.holdingOnePxScrollRange,
-        actualScrollObserved: browserUiResidualRecovery.actualScrollObserved,
-        recovered: browserUiResidualRecovery.recovered
-      } : null,
-      eligibility: cp60DiagnosticEligibilitySummary(),
-      recovery: cp60DiagnosticRecoverySummary(),
-      orientationTransition: orientationViewportTransition ? {
-        completed: orientationViewportTransition.completed,
-        ageMs: roundViewportMeasurement(
-          performance.now() - orientationViewportTransition.startedAt)
-      } : null,
-      fullscreenRestore: fullscreenExitViewportRestore ? {
-        phase: fullscreenExitViewportRestore.phase,
-        orientation: fullscreenExitViewportRestore.orientation,
-        target: cp60DiagnosticViewport(fullscreenExitViewportRestore.windowedTarget),
-        candidate: cp60DiagnosticViewport(fullscreenExitViewportRestore.candidate),
-        stableFrames: fullscreenExitViewportRestore.stableFrames
-      } : null,
-      rootResync: {
-        generation: rootOriginResyncGeneration,
-        reason: rootOriginResyncReason,
-        writeActive: rootOriginResyncWriteActive
-      },
-      scroll: {
-        scrollingElement: scroller === root ? "html" : scroller === body ? "body" : null,
-        window: [
-          roundViewportMeasurement(window.scrollX),
-          roundViewportMeasurement(window.scrollY)
-        ],
-        html: {
-          client: [root.clientWidth, root.clientHeight],
-          extent: [root.scrollWidth, root.scrollHeight],
-          offset: [root.scrollLeft, root.scrollTop]
-        },
-        body: body ? {
-          client: [body.clientWidth, body.clientHeight],
-          extent: [body.scrollWidth, body.scrollHeight],
-          offset: [body.scrollLeft, body.scrollTop]
-        } : null
-      },
-      rects: {
-        html: readElementRect(root),
-        body: readElementRect(body),
-        appRoot: readElementRect(appRoot),
-        activeView: readElementRect(state.screen === Screen.PLAY ? slotView : setupView),
-        playLayout: readElementRect(document.querySelector(".play-layout")),
-        topbar: readElementRect(document.querySelector(".play-topbar")),
-        mainButton: readElementRect(mainButton)
-      },
-      styles: {
-        html: readStyle(root),
-        body: readStyle(body),
-        appRoot: readStyle(appRoot),
-        activeView: readStyle(state.screen === Screen.PLAY ? slotView : setupView)
-      },
-      cssVariables: {
-        appWidth: root.style.getPropertyValue("--app-width"),
-        appHeight: root.style.getPropertyValue("--app-height"),
-        appCoordinateHeight: root.style.getPropertyValue("--app-coordinate-height"),
-        visualOriginX: root.style.getPropertyValue("--visual-origin-x"),
-        visualOriginY: root.style.getPropertyValue("--visual-origin-y"),
-        browserUiBottomOcclusion: root.style.getPropertyValue("--browser-ui-bottom-occlusion")
-      }
-    };
-  }
-
-  async function copyCp60Diagnostics() {
-    if (!cp60DiagnosticRun) return false;
-    cp60DiagnosticRun.finalSnapshot = readCp60DiagnosticFinalSnapshot();
-    recordCp60Diagnostic("diagnostic-export-requested", {
-      finalSnapshotCaptured: true
-    });
-    const text = JSON.stringify(cp60DiagnosticRun, null, 2);
-    try {
-      await navigator.clipboard.writeText(text);
-    } catch (_error) {
-      const textarea = document.createElement("textarea");
-      textarea.value = text;
-      textarea.setAttribute("readonly", "");
-      textarea.style.position = "fixed";
-      textarea.style.opacity = "0";
-      document.body.appendChild(textarea);
-      textarea.select();
-      const copied = document.execCommand("copy");
-      textarea.remove();
-      if (!copied) return false;
-    }
-    showToast("CP60診断ログをコピーしました", { duration: 2600 });
-    return true;
-  }
 
 
   const LEGACY_VIEWPORT_DIAGNOSTIC_STORAGE_KEYS = Object.freeze([
@@ -11869,17 +11633,6 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
     const recoveryOrientation = completedRestore?.orientation
       || (recoveryTarget ? getViewportOrientation(recoveryTarget) : null);
 
-    recordCp60Diagnostic("fullscreen-exit-restore-cleared", {
-      preservePaint,
-      reason,
-      scheduleResidualRecovery,
-      armRotationRecovery,
-      recoveryTarget: cp60DiagnosticViewport(recoveryTarget),
-      recoveryOrientation,
-      completedPhase: completedRestore?.phase || null,
-      completedStableFrames: completedRestore?.stableFrames ?? null
-    });
-
     fullscreenExitViewportRestore = null;
     fullscreenSnapshotFrozenForExit = false;
     cancelFullscreenExitViewportVerification();
@@ -12261,14 +12014,6 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
   } = {}) {
     cancelPostFullscreenWindowedRotationOverflowScrollRecoveryTimers();
     const recovery = postFullscreenWindowedRotationOverflowScrollRecovery;
-    if (recovery) {
-      recordCp60Diagnostic("ordinary-rotation-recovery-cleared", {
-        clearEligibility,
-        restoreStyles,
-        recovery: cp60DiagnosticRecoverySummary(),
-        lastGateObservation: recovery.lastGateObservation || null
-      });
-    }
     if (restoreStyles) restorePostFullscreenWindowedRotationOverflowScrollRecoveryStyles(recovery);
     postFullscreenWindowedRotationOverflowScrollRecovery = null;
     if (clearEligibility) postFullscreenWindowedRotationRecoveryEligibility = null;
@@ -12286,12 +12031,6 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
       armedAt: performance.now(),
       lastRecoveryAt: null
     };
-    recordCp60Diagnostic("ordinary-rotation-recovery-eligible", {
-      generation,
-      exitTarget: cp60DiagnosticViewport(target),
-      exitOrientation: orientation || null,
-      exitReason: reason || null
-    });
     return true;
   }
 
@@ -12318,15 +12057,7 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
 
     const layout = getViewportSize();
     const visible = getVisibleViewportSize();
-    const inner = { width: window.innerWidth, height: window.innerHeight };
     const orientation = getViewportOrientation(layout);
-    recovery.lastGateObservation = {
-      layout: cp60DiagnosticViewport(layout),
-      visible: cp60DiagnosticViewport(visible),
-      inner: cp60DiagnosticViewport(inner),
-      orientation,
-      target: cp60DiagnosticViewport(recovery.target)
-    };
     if (orientation !== recovery.orientation || getViewportOrientation(visible) !== recovery.orientation) {
       return "orientation-mismatch";
     }
@@ -12336,12 +12067,11 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
     if (!viewportDimensionsMatch(layout, recovery.target, VIEWPORT_GEOMETRY_TOLERANCE_PX)) {
       return "layout-not-windowed-target";
     }
-    if (Math.abs((Number(inner.height) || 0) - visible.height) > VIEWPORT_GEOMETRY_TOLERANCE_PX) {
+    if (Math.abs((Number(window.innerHeight) || 0) - visible.height) > VIEWPORT_GEOMETRY_TOLERANCE_PX) {
       return "inner-visible-mismatch";
     }
 
     const heightGap = recovery.target.height - visible.height;
-    recovery.lastGateObservation.heightGap = roundViewportMeasurement(heightGap);
     if (heightGap <= VIEWPORT_GEOMETRY_TOLERANCE_PX) return "residual-not-present";
     if (heightGap > BROWSER_UI_RESIDUAL_OCCLUSION_MAX_PX) return "residual-too-large";
 
@@ -12349,24 +12079,11 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
     // reject any pre-existing root range/offset before relaxing containment.
     const root = document.documentElement;
     const scrollingElement = document.scrollingElement || root;
-    const scrollClientHeight = scrollingElement.clientHeight;
-    const scrollHeight = scrollingElement.scrollHeight;
-    const windowScrollY = window.scrollY;
-    const rootScrollY = scrollingElement.scrollTop;
-    recovery.lastGateObservation.scrollingElement = scrollingElement === root ? "html" : "body";
-    recovery.lastGateObservation.scrollExtent = {
-      clientHeight: roundViewportMeasurement(scrollClientHeight),
-      scrollHeight: roundViewportMeasurement(scrollHeight)
-    };
-    recovery.lastGateObservation.scrollOffset = {
-      windowY: roundViewportMeasurement(windowScrollY),
-      rootY: roundViewportMeasurement(rootScrollY)
-    };
-    if (scrollHeight > scrollClientHeight + .5) {
+    if (scrollingElement.scrollHeight > scrollingElement.clientHeight + .5) {
       return "preexisting-scroll-range";
     }
-    if (Math.abs(Number(windowScrollY) || 0) > .5
-      || Math.abs(Number(rootScrollY) || 0) > .5) {
+    if (Math.abs(Number(window.scrollY) || 0) > .5
+      || Math.abs(Number(scrollingElement.scrollTop) || 0) > .5) {
       return "preexisting-scroll-offset";
     }
     return null;
@@ -12377,10 +12094,6 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
       || postFullscreenWindowedRotationOverflowScrollRecovery.generation !== recovery.generation) return;
     postFullscreenWindowedRotationOverflowScrollRecoveryCleanupTimer = null;
     recovery.phase = "complete";
-    recordCp60Diagnostic("ordinary-rotation-recovery-complete", {
-      recovery: cp60DiagnosticRecoverySummary(),
-      lastGateObservation: recovery.lastGateObservation || null
-    });
     clearPostFullscreenWindowedRotationOverflowScrollRecovery({ restoreStyles: false });
   }
 
@@ -12391,8 +12104,8 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
     recovery.phase = "cleanup-applied";
 
     restorePostFullscreenWindowedRotationOverflowScrollRecoveryStyles(recovery);
-    const restoredRootScrollHeight = document.documentElement.scrollHeight;
-    const restoredBodyRect = document.body ? document.body.getBoundingClientRect() : null;
+    void document.documentElement.scrollHeight;
+    if (document.body) void document.body.getBoundingClientRect();
     const scrollingElement = document.scrollingElement || document.documentElement;
     const cleanupScrollY = Math.max(
       Math.abs(Number(window.scrollY) || 0),
@@ -12401,14 +12114,6 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
     if (cleanupScrollY >= .5) {
       try { window.scrollTo(0, 0); } catch (_error) { /* Best-effort cleanup. */ }
     }
-    recordCp60Diagnostic("ordinary-rotation-recovery-cleanup-applied", {
-      recovery: cp60DiagnosticRecoverySummary(),
-      restoredRootScrollHeight: roundViewportMeasurement(restoredRootScrollHeight),
-      restoredBodyTop: roundViewportMeasurement(restoredBodyRect?.top),
-      restoredBodyHeight: roundViewportMeasurement(restoredBodyRect?.height),
-      cleanupScrollY: roundViewportMeasurement(cleanupScrollY),
-      cleanupScrollResetRequested: cleanupScrollY >= .5
-    });
     postFullscreenWindowedRotationOverflowScrollRecoveryCleanupTimer = setTimeout(
       () => finishPostFullscreenWindowedRotationOverflowScrollRecovery(recovery),
       POST_FULLSCREEN_ROTATION_OVERFLOW_SCROLL_RECOVERY_POST_CLEANUP_MS
@@ -12430,21 +12135,11 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
     if (blockReason) {
       const elapsed = performance.now() - recovery.requestedAt;
       if (elapsed >= POST_FULLSCREEN_ROTATION_OVERFLOW_SCROLL_RECOVERY_TIMEOUT_MS) {
-        recordCp60Diagnostic("ordinary-rotation-recovery-expired", {
-          reason: blockReason,
-          elapsed: roundViewportMeasurement(elapsed),
-          observation: recovery.lastGateObservation || null
-        });
         clearPostFullscreenWindowedRotationOverflowScrollRecovery();
         return;
       }
       if (recovery.lastBlockReason !== blockReason) {
         recovery.lastBlockReason = blockReason;
-        recordCp60Diagnostic("ordinary-rotation-recovery-deferred", {
-          reason: blockReason,
-          elapsed: roundViewportMeasurement(elapsed),
-          observation: recovery.lastGateObservation || null
-        });
       }
       postFullscreenWindowedRotationOverflowScrollRecoveryTimer = setTimeout(
         () => runPostFullscreenWindowedRotationOverflowScrollRecovery(recovery),
@@ -12472,17 +12167,7 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
     const relaxedScrollHeight = scrollingElement.scrollHeight;
     const relaxedClientHeight = scrollingElement.clientHeight;
     const rangeIntroducedByOverflow = relaxedScrollHeight > relaxedClientHeight + .5;
-    recordCp60Diagnostic("ordinary-rotation-root-overflow-y-applied", {
-      recovery: cp60DiagnosticRecoverySummary(),
-      relaxedClientHeight: roundViewportMeasurement(relaxedClientHeight),
-      relaxedScrollHeight: roundViewportMeasurement(relaxedScrollHeight),
-      rangeIntroducedByOverflow,
-      observation: recovery.lastGateObservation || null
-    });
     if (rangeIntroducedByOverflow) {
-      recordCp60Diagnostic("ordinary-rotation-recovery-aborted", {
-        reason: "root-overflow-y-created-scroll-range"
-      });
       clearPostFullscreenWindowedRotationOverflowScrollRecovery();
       return;
     }
@@ -12497,20 +12182,15 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
         || postFullscreenWindowedRotationOverflowScrollRecovery.generation !== recovery.generation) return;
       try { window.scrollTo(0, BROWSER_UI_RESIDUAL_RECOVERY_SCROLL_PX); } catch (_error) { /* Best effort. */ }
       recovery.phase = "scroll-request-issued";
-      recordCp60Diagnostic("ordinary-rotation-scroll-requested", {
-        requestedY: BROWSER_UI_RESIDUAL_RECOVERY_SCROLL_PX
-      });
 
       postFullscreenWindowedRotationOverflowScrollRecoveryFrame = requestAnimationFrame(() => {
         postFullscreenWindowedRotationOverflowScrollRecoveryFrame = null;
         if (!postFullscreenWindowedRotationOverflowScrollRecovery
           || postFullscreenWindowedRotationOverflowScrollRecovery.generation !== recovery.generation) return;
-        recordCp60Diagnostic("ordinary-rotation-next-frame", null);
         postFullscreenWindowedRotationOverflowScrollRecoveryFrame = requestAnimationFrame(() => {
           postFullscreenWindowedRotationOverflowScrollRecoveryFrame = null;
           if (!postFullscreenWindowedRotationOverflowScrollRecovery
             || postFullscreenWindowedRotationOverflowScrollRecovery.generation !== recovery.generation) return;
-          recordCp60Diagnostic("ordinary-rotation-second-frame", null);
           postFullscreenWindowedRotationOverflowScrollRecoveryVerifyTimer = setTimeout(
             () => verifyPostFullscreenWindowedRotationOverflowScrollRecovery(recovery),
             POST_FULLSCREEN_ROTATION_OVERFLOW_SCROLL_RECOVERY_VERIFY_MS
@@ -12533,33 +12213,12 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
   function schedulePostFullscreenWindowedRotationOverflowScrollRecovery(trigger = "windowed-residual") {
     const eligibility = postFullscreenWindowedRotationRecoveryEligibility;
     if (!POST_FULLSCREEN_ROTATION_OVERFLOW_SCROLL_RECOVERY_ENABLED || !eligibility) return false;
-    if (postFullscreenWindowedRotationOverflowScrollRecovery) {
-      recordCp60Diagnostic("ordinary-rotation-schedule-skipped", {
-        reason: "recovery-active",
-        trigger,
-        recovery: cp60DiagnosticRecoverySummary()
-      });
-      return false;
-    }
-    if (state.screen !== Screen.PLAY || document.hidden || isFullscreen() || isFullscreenTransitionActive()) {
-      recordCp60Diagnostic("ordinary-rotation-schedule-skipped", {
-        reason: "lifecycle-gate",
-        trigger,
-        screen: state.screen,
-        hidden: document.hidden,
-        fullscreen: isFullscreen(),
-        fullscreenTransition: state.fullscreenTransition
-      });
-      return false;
-    }
+    if (postFullscreenWindowedRotationOverflowScrollRecovery) return false;
+    if (state.screen !== Screen.PLAY || document.hidden || isFullscreen() || isFullscreenTransitionActive()) return false;
 
     const now = performance.now();
     if (eligibility.lastRecoveryAt !== null
       && now - eligibility.lastRecoveryAt < POST_FULLSCREEN_ROTATION_OVERFLOW_SCROLL_RECOVERY_COOLDOWN_MS) {
-      recordCp60Diagnostic("ordinary-rotation-schedule-skipped", {
-        reason: "cooldown",
-        trigger
-      });
       return false;
     }
 
@@ -12580,57 +12239,15 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
     } : null);
     if (!targetAuthority?.viewport
       || !viewportDimensionsMatch(layout, targetAuthority.viewport, VIEWPORT_GEOMETRY_TOLERANCE_PX)) {
-      recordCp60Diagnostic("ordinary-rotation-schedule-skipped", {
-        reason: "windowed-target-unavailable",
-        trigger,
-        triggerKind,
-        layout: cp60DiagnosticViewport(layout),
-        visible: cp60DiagnosticViewport(visible),
-        orientation,
-        target: cp60DiagnosticViewport(targetAuthority?.viewport),
-        source: targetAuthority?.source || null
-      });
       return false;
     }
 
-    if (!viewportWidthsMatch(visible, targetAuthority.viewport)) {
-      recordCp60Diagnostic("ordinary-rotation-schedule-skipped", {
-        reason: "visible-width-mismatch",
-        trigger,
-        triggerKind,
-        layout: cp60DiagnosticViewport(layout),
-        visible: cp60DiagnosticViewport(visible),
-        target: cp60DiagnosticViewport(targetAuthority.viewport)
-      });
-      return false;
-    }
+    if (!viewportWidthsMatch(visible, targetAuthority.viewport)) return false;
     const heightGap = targetAuthority.viewport.height - visible.height;
     if (heightGap <= VIEWPORT_GEOMETRY_TOLERANCE_PX
-      || heightGap > BROWSER_UI_RESIDUAL_OCCLUSION_MAX_PX) {
-      recordCp60Diagnostic("ordinary-rotation-schedule-skipped", {
-        reason: heightGap <= VIEWPORT_GEOMETRY_TOLERANCE_PX
-          ? "residual-not-present"
-          : "residual-too-large",
-        trigger,
-        triggerKind,
-        layout: cp60DiagnosticViewport(layout),
-        visible: cp60DiagnosticViewport(visible),
-        target: cp60DiagnosticViewport(targetAuthority.viewport),
-        heightGap: roundViewportMeasurement(heightGap)
-      });
-      return false;
-    }
+      || heightGap > BROWSER_UI_RESIDUAL_OCCLUSION_MAX_PX) return false;
 
     if (triggerKind !== "rotation") {
-      recordCp60Diagnostic("ordinary-rotation-schedule-skipped", {
-        reason: "not-rotation-trigger",
-        trigger,
-        triggerKind,
-        layout: cp60DiagnosticViewport(layout),
-        visible: cp60DiagnosticViewport(visible),
-        target: cp60DiagnosticViewport(targetAuthority.viewport),
-        heightGap: roundViewportMeasurement(heightGap)
-      });
       return false;
     }
 
@@ -12651,16 +12268,9 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
       phase: "armed",
       stylesApplied: false,
       lastBlockReason: null,
-      lastGateObservation: null,
       savedStyles: null
     };
     postFullscreenWindowedRotationOverflowScrollRecovery = recovery;
-    recordCp60Diagnostic("ordinary-rotation-recovery-armed", {
-      recovery: cp60DiagnosticRecoverySummary(),
-      layout: cp60DiagnosticViewport(layout),
-      visible: cp60DiagnosticViewport(visible),
-      heightGap: roundViewportMeasurement(heightGap)
-    });
     postFullscreenWindowedRotationOverflowScrollRecoveryTimer = setTimeout(
       () => runPostFullscreenWindowedRotationOverflowScrollRecovery(recovery),
       0
@@ -12895,6 +12505,18 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
       orientation
     };
     verifiedWindowedViewportCandidates[orientation] = null;
+
+    // A post-Fullscreen ordinary rotation can finish before the destination
+    // Windowed target completes its independent settle verification. Recheck
+    // the already-gated recovery at the moment that missing authority becomes
+    // durable; otherwise the earlier target-unavailable decision is terminal.
+    const eligibility = postFullscreenWindowedRotationRecoveryEligibility;
+    if (eligibility?.exitOrientation
+      && eligibility.exitOrientation !== orientation) {
+      schedulePostFullscreenWindowedRotationOverflowScrollRecovery(
+        "orientation-transition-completed:verified-windowed-target-established"
+      );
+    }
     return true;
   }
 
@@ -13020,36 +12642,12 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
     const visible = getVisibleViewportSize();
     const orientation = getViewportOrientation(layout);
     const learned = observeExpectedWindowedViewport(layout, visible, orientation);
-    recordCp60Diagnostic("orientation-transition-completed", {
-      trigger,
-      layout: cp60DiagnosticViewport(layout),
-      visible: cp60DiagnosticViewport(visible),
-      orientation,
-      expectedLearningStarted: Boolean(expectedWindowedViewportCandidates[orientation]),
-      expectedLearnedNow: learned,
-      eligibility: cp60DiagnosticEligibilitySummary()
-    });
     scheduleLayoutUpdate();
     schedulePostFullscreenWindowedRotationOverflowScrollRecovery(`orientation-transition-completed:${trigger}`);
     return true;
   }
 
   function beginOrientationViewportTransition(layout = getViewportSize()) {
-    recordCp60Diagnostic("orientation-transition-began", {
-      layout: cp60DiagnosticViewport(layout),
-      orientation: getViewportOrientation(layout),
-      genericResidualRecovery: browserUiResidualRecovery ? {
-        generation: browserUiResidualRecovery.generation,
-        phase: browserUiResidualRecovery.phase,
-        target: cp60DiagnosticViewport(browserUiResidualRecovery.target),
-        orientation: browserUiResidualRecovery.orientation,
-        holdingOnePxScrollRange: browserUiResidualRecovery.holdingOnePxScrollRange,
-        actualScrollObserved: browserUiResidualRecovery.actualScrollObserved,
-        recovered: browserUiResidualRecovery.recovered
-      } : null,
-      ordinaryRecovery: cp60DiagnosticRecoverySummary(),
-      eligibility: cp60DiagnosticEligibilitySummary()
-    });
     if (browserUiResidualRecovery) clearBrowserUiResidualRecovery();
     if (postFullscreenWindowedRotationOverflowScrollRecovery) {
       const recovery = postFullscreenWindowedRotationOverflowScrollRecovery;
@@ -19573,14 +19171,6 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
   const handleFullscreenChange = () => {
     invalidateInFlightLayoutInput();
     resetDocumentScrollPosition();
-    recordCp60Diagnostic("fullscreenchange", {
-      active: isFullscreen(),
-      transition: state.fullscreenTransition,
-      lastLayoutSnapshot: cp60DiagnosticViewport(lastFullscreenLayoutViewport),
-      lastVisibleSnapshot: cp60DiagnosticViewport(lastFullscreenVisibleViewport),
-      displayed: cp60DiagnosticViewport(displayedAppViewport),
-      displayedOrientation: displayedViewportOrientation
-    });
     if (isFullscreen()) {
       clearPostFullscreenWindowedRotationOverflowScrollRecovery({ clearEligibility: true });
       clearFullscreenExitOrientationConflict("fullscreen-entry-confirmed");
@@ -19616,18 +19206,6 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
       || Math.abs(next.height - previousVisualViewportSize.height) > 1;
     if (Math.abs(next.width - previousVisualViewportSize.width) > 80 || Math.abs(next.height - previousVisualViewportSize.height) > 80) invalidateInFlightLayoutInput();
     lastVisualViewportSize = next;
-    if (fullscreenExitViewportRestore
-      || postFullscreenWindowedRotationRecoveryEligibility
-      || postFullscreenWindowedRotationOverflowScrollRecovery) {
-      recordCp60Diagnostic("visual-viewport-change", {
-        previous: cp60DiagnosticViewport(previousVisualViewportSize),
-        next: cp60DiagnosticViewport(next),
-        fullscreen: isFullscreen(),
-        orientationTransitionActive: Boolean(orientationViewportTransition),
-        eligibility: cp60DiagnosticEligibilitySummary(),
-        recovery: cp60DiagnosticRecoverySummary()
-      });
-    }
     if (isFullscreen()) captureFullscreenViewportSnapshot();
     updateFullscreenSafeArea();
     reconcileObservedViewportOrientation();
@@ -19645,11 +19223,6 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
   window.visualViewport?.addEventListener("resize", handleVisualViewportChange, { passive: true });
   window.visualViewport?.addEventListener("scroll", handleVisualViewportChange, { passive: true });
   window.addEventListener("scroll", () => {
-    if (postFullscreenWindowedRotationOverflowScrollRecovery) {
-      recordCp60Diagnostic("window-scroll-event-during-ordinary-recovery", {
-        phase: postFullscreenWindowedRotationOverflowScrollRecovery.phase
-      });
-    }
     updateVisualViewportOriginCompensation();
     if (browserUiResidualRecovery?.suppressInvariant) {
       return;
@@ -20168,46 +19741,9 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
   syncReducedEffectsClass();
   if (titleVersion) {
     titleVersion.textContent = APP_VERSION ? `v${APP_VERSION}` : "";
-    if (cp60DiagnosticRun) titleVersion.textContent += "・CP60 passive";
-  }
-  if (cp60DiagnosticRun) {
-    document.documentElement.dataset.cp60Diagnostic = "passive";
-    const diagnosticExportButton = document.createElement("button");
-    diagnosticExportButton.type = "button";
-    diagnosticExportButton.id = "cp60DiagnosticExport";
-    diagnosticExportButton.textContent = "CP60ログ";
-    diagnosticExportButton.setAttribute("aria-label", "CP60診断ログをコピー");
-    diagnosticExportButton.style.cssText = [
-      "position:fixed",
-      "right:max(10px,env(safe-area-inset-right,0px))",
-      "bottom:max(10px,env(safe-area-inset-bottom,0px))",
-      "z-index:2147483647",
-      "min-width:88px",
-      "min-height:44px",
-      "padding:8px 10px",
-      "border:2px solid #17324d",
-      "border-radius:10px",
-      "background:#fffaf0",
-      "color:#17324d",
-      "font:700 14px/1 system-ui,sans-serif",
-      "touch-action:manipulation"
-    ].join(";");
-    diagnosticExportButton.addEventListener("click", () => {
-      void copyCp60Diagnostics().then(copied => {
-        if (!copied) showToast("CP60診断ログをコピーできませんでした", { duration: 3200 });
-      });
-    });
-    document.body.appendChild(diagnosticExportButton);
   }
   discardLegacyViewportDiagnostics();
   updateViewportCssVariables();
-  recordCp60Diagnostic("diagnostic-run-started", {
-    mode: "passive",
-    navigationType: performance.getEntriesByType?.("navigation")?.[0]?.type || "navigate",
-    bootLayout: cp60DiagnosticViewport(bootPaintLayout),
-    bootVisible: cp60DiagnosticViewport(bootPaintVisible),
-    bootOrientation: bootPaintOrientation
-  });
   setIconButton($("soundBtn"), state.soundOn ? iconMarkup.soundOn : iconMarkup.soundOff, state.soundOn ? "音を消す" : "音を出す", "音声");
   $("soundBtn").setAttribute("aria-pressed", String(state.soundOn));
   updateFullscreenIcon();

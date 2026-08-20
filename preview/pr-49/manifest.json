@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "kind": "pull-request-preview",
+  "source": {
+    "repository": "zanzarame/order-slot-dev",
+    "pullRequest": 49,
+    "commit": "37b6cee70865ec6570ddd98e8794883dbc034b30",
+    "path": "app/順番スロット_v8.0.113.html",
+    "version": "8.0.113",
+    "gitBlob": "bd3799b5914cc8b816b0a55f6b61238d859e4c48",
+    "sha256": "558C4857027CEA2DC70EC9F194BAA286D18447B650DD02860AA5167FD332B71D",
+    "bytes": 731224
+  },
+  "preview": {
+    "repository": "zanzarame/order-slot",
+    "path": "preview/pr-49/index.html",
+    "url": "https://zanzarame.github.io/order-slot/preview/pr-49/",
+    "sha256": "558C4857027CEA2DC70EC9F194BAA286D18447B650DD02860AA5167FD332B71D",
+    "bytes": 731224
+  },
+  "productionRootBefore": {
+    "path": "index.html",
+    "gitBlob": "bd23bed698b6c7852a85cfbccf03604c9ec71e60",
+    "sha256": "7F70BA0A6126EE218CB831032B4783FD48C2A778A8050BD346054A285BBC60F3",
+    "bytes": 818385
+  },
+  "privacy": {
+    "realParticipantDataIncluded": false,
+    "diagnosticLogsIncluded": false,
+    "credentialsIncluded": false,
+    "unapprovedSecretsIncluded": false,
+    "reviewed": true
+  }
+}

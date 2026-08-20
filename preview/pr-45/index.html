@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 
 <!-- 順番スロット -->
-<html class="transient-viewport-boot-painting" data-app-version="8.0.111" lang="ja">
+<html class="transient-viewport-boot-painting" data-app-version="8.0.112" lang="ja">
 <head>
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" name="viewport"/>
@@ -594,7 +594,11 @@ select {
 }
 
 .setup-view:not(.showing-title) {
-  padding-bottom: max(clamp(18px, 3vw, 36px), var(--effective-safe-bottom));
+  padding-bottom: max(
+    clamp(18px, 3vw, 36px),
+    var(--effective-safe-bottom),
+    var(--focused-name-input-scroll-reserve, 0px)
+  );
 }
 
 .ghost,
@@ -8499,50 +8503,6 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
   max-width: none;
   justify-self: stretch;
 }
-
-/* XR04 v8.0.111 is an observation-only diagnostic build. These fixed controls
-   stay outside the application scroll surfaces and are removed from the product
-   candidate after the iPadOS Safari G1/G2 runs. */
-#xr04DiagnosticControls {
-  position: fixed;
-  z-index: 2147483646;
-  top: max(8px, env(safe-area-inset-top, 0px));
-  left: max(8px, env(safe-area-inset-left, 0px));
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  max-width: calc(100vw - 16px);
-  padding: 5px;
-  border: 1px solid rgba(255,255,255,.45);
-  border-radius: 10px;
-  background: rgba(7,19,31,.92);
-  color: #fff;
-  box-shadow: 0 4px 14px rgba(0,0,0,.28);
-  font-size: 11px;
-  line-height: 1.2;
-}
-
-#xr04DiagnosticControls[hidden] {
-  display: none !important;
-}
-
-#xr04DiagnosticExportBtn {
-  min-height: 36px;
-  padding: 7px 10px;
-  border: 1px solid rgba(255,255,255,.45);
-  border-radius: 8px;
-  background: #fff;
-  color: #17324d;
-  font: inherit;
-  font-weight: 800;
-}
-
-#xr04DiagnosticStatus {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 </style>
 </head>
 <body>
@@ -8820,10 +8780,6 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
 <div aria-atomic="true" aria-live="polite" class="app-announcer" id="appAnnouncer" role="status"></div>
 <div aria-hidden="true" class="toast" hidden="" id="toast"></div>
 </div>
-<div aria-label="XR04診断操作" hidden="" id="xr04DiagnosticControls">
-<button id="xr04DiagnosticExportBtn" tabindex="-1" type="button">XR04ログ保存</button>
-<span aria-live="polite" id="xr04DiagnosticStatus">準備中</span>
-</div>
 <script>(() => {
   "use strict";
 
@@ -8870,6 +8826,7 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
   const DOUBLE_TAP_GUARD_DISTANCE_PX = 48;
   const VIEWPORT_GEOMETRY_TOLERANCE_PX = 2;
   const PAGE_ZOOM_SCALE_TOLERANCE = 0.01;
+  const FOCUSED_NAME_INPUT_VISIBILITY_MARGIN_PX = 12;
   // Keep browser-chrome residuals below the software-keyboard floor (120px),
   // while covering the 75-84px VisualViewport reductions observed on iPadOS Chrome.
   const BROWSER_UI_RESIDUAL_OCCLUSION_MAX_PX = 112;
@@ -9472,9 +9429,85 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
   }
 
   function resetSetupScrollPosition() {
+    clearFocusedNameInputVisibilityAdjustment();
     setupView.scrollTop = 0;
     setupView.scrollLeft = 0;
     resetDocumentScrollPosition();
+  }
+
+  let focusedNameInputVisibilityFrame = 0;
+
+  function clearFocusedNameInputVisibilityAdjustment() {
+    if (focusedNameInputVisibilityFrame) {
+      cancelAnimationFrame(focusedNameInputVisibilityFrame);
+      focusedNameInputVisibilityFrame = 0;
+    }
+    setupView.style.removeProperty("--focused-name-input-scroll-reserve");
+  }
+
+  function activeEditorNameInput() {
+    const active = document.activeElement;
+    return state.screen === Screen.EDITOR
+      && active instanceof HTMLInputElement
+      && active.classList.contains("name-input")
+      && !active.disabled
+      && !active.inert
+      ? active
+      : null;
+  }
+
+  function ensureFocusedNameInputVisible() {
+    const input = activeEditorNameInput();
+    const visual = window.visualViewport;
+    const visualScale = Number(visual?.scale) || 1;
+    if (!input || Math.abs(visualScale - 1) > PAGE_ZOOM_SCALE_TOLERANCE) {
+      const setupRect = setupView.getBoundingClientRect();
+      const visualBottom = (Number(visual?.offsetTop) || 0)
+        + (Number(visual?.height) || window.innerHeight);
+      if (visualBottom >= setupRect.bottom - VIEWPORT_GEOMETRY_TOLERANCE_PX) {
+        setupView.style.removeProperty("--focused-name-input-scroll-reserve");
+      }
+      return false;
+    }
+
+    const setupRect = setupView.getBoundingClientRect();
+    const visualTop = Number(visual?.offsetTop) || 0;
+    const visualBottom = visualTop + (Number(visual?.height) || window.innerHeight);
+    const visibleTop = Math.max(setupRect.top, visualTop);
+    const visibleBottom = Math.min(setupRect.bottom, visualBottom);
+    if (visibleBottom - visibleTop <= FOCUSED_NAME_INPUT_VISIBILITY_MARGIN_PX * 2) return false;
+
+    const bottomOcclusion = Math.max(0, setupRect.bottom - visibleBottom);
+    if (bottomOcclusion > VIEWPORT_GEOMETRY_TOLERANCE_PX) {
+      setupView.style.setProperty(
+        "--focused-name-input-scroll-reserve",
+        `${Math.ceil(bottomOcclusion + FOCUSED_NAME_INPUT_VISIBILITY_MARGIN_PX)}px`
+      );
+    } else {
+      setupView.style.removeProperty("--focused-name-input-scroll-reserve");
+    }
+
+    const inputRect = input.getBoundingClientRect();
+    const guardedTop = visibleTop + FOCUSED_NAME_INPUT_VISIBILITY_MARGIN_PX;
+    const guardedBottom = visibleBottom - FOCUSED_NAME_INPUT_VISIBILITY_MARGIN_PX;
+    let scrollDelta = 0;
+    if (inputRect.bottom > guardedBottom) scrollDelta = inputRect.bottom - guardedBottom;
+    else if (inputRect.top < guardedTop) scrollDelta = inputRect.top - guardedTop;
+    if (Math.abs(scrollDelta) <= .5) return false;
+
+    const maxScrollTop = Math.max(0, setupView.scrollHeight - setupView.clientHeight);
+    const nextScrollTop = Math.min(maxScrollTop, Math.max(0, setupView.scrollTop + scrollDelta));
+    if (Math.abs(nextScrollTop - setupView.scrollTop) <= .5) return false;
+    setupView.scrollTop = nextScrollTop;
+    return true;
+  }
+
+  function scheduleFocusedNameInputVisibilityAdjustment() {
+    if (focusedNameInputVisibilityFrame) return;
+    focusedNameInputVisibilityFrame = requestAnimationFrame(() => {
+      focusedNameInputVisibilityFrame = 0;
+      ensureFocusedNameInputVisible();
+    });
   }
 
   function resetPlayScrollPosition() {
@@ -10036,6 +10069,7 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
     introSection.hidden = state.screen !== Screen.TITLE;
     editorSection.hidden = state.screen !== Screen.EDITOR;
     setupView.classList.toggle("showing-title", state.screen === Screen.TITLE);
+    if (state.screen !== Screen.EDITOR) clearFocusedNameInputVisibilityAdjustment();
     if (playVisible) resetDocumentScrollPosition();
   }
 
@@ -14022,249 +14056,6 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
       width: Math.max(1, visual.width || window.innerWidth || layout.width),
       height: Math.max(1, visual.height || window.innerHeight || layout.height)
     };
-  }
-
-  // -------------------------------------------------------------------------
-  // XR04 keyboard/input visibility diagnostics (v8.0.111 only)
-  // -------------------------------------------------------------------------
-  function installXr04KeyboardVisibilityDiagnostics() {
-    const controls = $("xr04DiagnosticControls");
-    const exportButton = $("xr04DiagnosticExportBtn");
-    const status = $("xr04DiagnosticStatus");
-    if (!controls || !exportButton || !status) return;
-
-    const requestedRun = new URL(location.href).searchParams.get("xr04");
-    const caseId = requestedRun === "G1" || requestedRun === "G2"
-      ? `XR04-${requestedRun}`
-      : "XR04-UNSPECIFIED";
-    const startedAtEpoch = Date.now();
-    const startedAt = performance.now();
-    const runId = `${caseId}-${startedAtEpoch}-${Math.random().toString(36).slice(2, 8)}`;
-    const events = [];
-    const maxEvents = 500;
-    let droppedEventCount = 0;
-    let exportGeneration = 0;
-    let lastFocusTrigger = { kind: "initial" };
-    let scrollSampleFrame = null;
-
-    const describeElement = element => {
-      if (!(element instanceof Element)) return null;
-      const card = element.closest(".participant-card");
-      const participantIndex = card
-        ? Array.from(participantGrid.children).indexOf(card) + 1
-        : null;
-      return {
-        tag: element.tagName.toLowerCase(),
-        id: element.id || null,
-        classes: Array.from(element.classList).sort(),
-        type: element instanceof HTMLInputElement ? element.type : null,
-        participantIndex: participantIndex > 0 ? participantIndex : null
-      };
-    };
-
-    const readScrollBox = element => element ? {
-      left: roundViewportMeasurement(element.scrollLeft),
-      top: roundViewportMeasurement(element.scrollTop),
-      clientWidth: roundViewportMeasurement(element.clientWidth),
-      clientHeight: roundViewportMeasurement(element.clientHeight),
-      scrollWidth: roundViewportMeasurement(element.scrollWidth),
-      scrollHeight: roundViewportMeasurement(element.scrollHeight),
-      maxTop: roundViewportMeasurement(Math.max(0, element.scrollHeight - element.clientHeight))
-    } : null;
-
-    const capture = (eventName, { target = document.activeElement, extra = null } = {}) => {
-      if (events.length >= maxEvents) {
-        droppedEventCount += 1;
-        return;
-      }
-      const visual = window.visualViewport;
-      const root = document.scrollingElement;
-      const targetRect = readElementRect(target);
-      const visualTop = roundViewportMeasurement(visual?.offsetTop || 0);
-      const visualLeft = roundViewportMeasurement(visual?.offsetLeft || 0);
-      const visualWidth = roundViewportMeasurement(visual?.width || window.innerWidth);
-      const visualHeight = roundViewportMeasurement(visual?.height || window.innerHeight);
-      const visualBottom = visualTop + visualHeight;
-      const visualRight = visualLeft + visualWidth;
-      const rootStyle = getComputedStyle(document.documentElement);
-      const bodyStyle = getComputedStyle(document.body);
-      const setupStyle = getComputedStyle(setupView);
-      const appStyle = getComputedStyle(appRoot);
-      const capturedAtEpoch = Date.now();
-      const runT = Math.max(0, performance.now() - startedAt);
-      events.push({
-        sequence: events.length + 1,
-        event: eventName,
-        runT: roundViewportMeasurement(runT),
-        capturedAtEpoch,
-        caseId,
-        focusTrigger: { ...lastFocusTrigger },
-        activeElement: describeElement(document.activeElement),
-        target: describeElement(target),
-        screen: state.screen,
-        hidden: document.hidden,
-        geometry: {
-          layoutViewport: {
-            width: roundViewportMeasurement(document.documentElement.clientWidth),
-            height: roundViewportMeasurement(document.documentElement.clientHeight)
-          },
-          inner: {
-            width: roundViewportMeasurement(window.innerWidth),
-            height: roundViewportMeasurement(window.innerHeight)
-          },
-          visualViewport: visual ? {
-            width: visualWidth,
-            height: visualHeight,
-            offsetLeft: visualLeft,
-            offsetTop: visualTop,
-            pageLeft: roundViewportMeasurement(visual.pageLeft),
-            pageTop: roundViewportMeasurement(visual.pageTop),
-            scale: roundViewportMeasurement(visual.scale)
-          } : null,
-          visualRect: {
-            left: visualLeft,
-            top: visualTop,
-            right: visualRight,
-            bottom: visualBottom
-          },
-          rootScroll: readScrollBox(root),
-          windowScroll: {
-            x: roundViewportMeasurement(window.scrollX),
-            y: roundViewportMeasurement(window.scrollY)
-          },
-          bodyRect: readElementRect(document.body),
-          appRootRect: readElementRect(appRoot),
-          setupViewRect: readElementRect(setupView),
-          setupViewScroll: readScrollBox(setupView),
-          targetRect,
-          targetWithinVisualViewport: targetRect ? {
-            fullyVisible: targetRect.top >= visualTop && targetRect.bottom <= visualBottom
-              && targetRect.left >= visualLeft && targetRect.right <= visualRight,
-            abovePx: roundViewportMeasurement(Math.max(0, visualTop - targetRect.top)),
-            belowPx: roundViewportMeasurement(Math.max(0, targetRect.bottom - visualBottom))
-          } : null,
-          css: {
-            htmlOverflow: rootStyle.overflow,
-            bodyOverflow: bodyStyle.overflow,
-            setupOverflowY: setupStyle.overflowY,
-            appRootPosition: appStyle.position,
-            appWidth: rootStyle.getPropertyValue("--app-width").trim(),
-            appHeight: rootStyle.getPropertyValue("--app-height").trim(),
-            visualOriginX: rootStyle.getPropertyValue("--visual-origin-x").trim(),
-            visualOriginY: rootStyle.getPropertyValue("--visual-origin-y").trim()
-          }
-        },
-        softwareKeyboardViewportLock: softwareKeyboardViewportLock ? {
-          phase: softwareKeyboardViewportLock.phase,
-          orientation: softwareKeyboardViewportLock.orientation,
-          viewport: { ...softwareKeyboardViewportLock.viewport },
-          keyboardObserved: softwareKeyboardViewportLock.keyboardObserved,
-          provisional: softwareKeyboardViewportLock.provisional,
-          recoveryTargetReached: softwareKeyboardViewportLock.recoveryTargetReached
-        } : null,
-        extra
-      });
-      status.textContent = `${caseId} / ${events.length}件`;
-    };
-
-    const scheduleFocusSamples = target => {
-      queueMicrotask(() => capture("focus-sample-microtask", { target }));
-      requestAnimationFrame(() => {
-        capture("focus-sample-raf-1", { target });
-        requestAnimationFrame(() => capture("focus-sample-raf-2", { target }));
-      });
-      for (const delay of [50, 150, 350, 700]) {
-        setTimeout(() => capture(`focus-sample-${delay}ms`, { target }), delay);
-      }
-    };
-
-    const scheduleScrollSample = eventName => {
-      if (scrollSampleFrame !== null) return;
-      scrollSampleFrame = requestAnimationFrame(() => {
-        scrollSampleFrame = null;
-        capture(eventName);
-      });
-    };
-
-    capture("diagnostic-run-started", {
-      extra: {
-        appVersion: APP_VERSION,
-        userAgent: navigator.userAgent,
-        platform: navigator.platform,
-        language: navigator.language,
-        privacy: "No participant names or input values are recorded."
-      }
-    });
-
-    document.addEventListener("keydown", event => {
-      if (event.key !== "Tab") return;
-      lastFocusTrigger = { kind: "keyboard-tab", shiftKey: event.shiftKey };
-      capture("keydown-tab", { target: event.target, extra: { shiftKey: event.shiftKey } });
-    }, { capture: true });
-    document.addEventListener("pointerdown", event => {
-      if (!(event.target instanceof Element) || !event.target.closest(".name-input")) return;
-      lastFocusTrigger = { kind: "pointer", pointerType: event.pointerType || null };
-      capture("pointerdown-name-input", {
-        target: event.target,
-        extra: { pointerType: event.pointerType || null, isPrimary: event.isPrimary !== false }
-      });
-    }, { capture: true, passive: true });
-    document.addEventListener("focusin", event => {
-      if (!isTextEntryControl(event.target)) return;
-      capture("focusin-text-entry-capture", { target: event.target });
-      scheduleFocusSamples(event.target);
-    }, { capture: true });
-    document.addEventListener("focusout", event => {
-      if (!isTextEntryControl(event.target)) return;
-      capture("focusout-text-entry-capture", {
-        target: event.target,
-        extra: { relatedTarget: describeElement(event.relatedTarget) }
-      });
-    }, { capture: true });
-    setupView.addEventListener("scroll", () => scheduleScrollSample("setup-view-scroll"), { passive: true });
-    window.addEventListener("scroll", () => scheduleScrollSample("window-scroll"), { passive: true });
-    window.addEventListener("resize", () => capture("window-resize"), { passive: true });
-    window.addEventListener("orientationchange", () => capture("orientationchange"), { passive: true });
-    window.visualViewport?.addEventListener("resize", () => capture("visual-viewport-resize"), { passive: true });
-    window.visualViewport?.addEventListener("scroll", () => capture("visual-viewport-scroll"), { passive: true });
-    window.addEventListener("pagehide", () => capture("pagehide"), { capture: true });
-
-    exportButton.addEventListener("pointerdown", event => event.preventDefault());
-    exportButton.addEventListener("mousedown", event => event.preventDefault());
-    exportButton.addEventListener("click", () => {
-      exportGeneration += 1;
-      capture("diagnostic-export", { extra: { exportGeneration } });
-      const exportedAtEpoch = Date.now();
-      const payload = {
-        version: APP_VERSION,
-        diagnosticRun: {
-          schemaVersion: 1,
-          runId,
-          caseId,
-          appVersion: APP_VERSION,
-          startedAtEpoch,
-          updatedAtEpoch: exportedAtEpoch,
-          exportGeneration,
-          eventCount: events.length,
-          droppedEventCount,
-          eventStorage: "memory",
-          privacyReviewed: true
-        },
-        events
-      };
-      const fileName = `OrderSlot_XR04_KeyboardVisibilityDiagnostic_iPadOS-Safari_${caseId}_v${APP_VERSION}.json`;
-      const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" }));
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = fileName;
-      document.body.append(anchor);
-      anchor.click();
-      anchor.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 2000);
-      status.textContent = `${caseId} / 保存済み`;
-    });
-
-    controls.hidden = false;
   }
 
   // -------------------------------------------------------------------------
@@ -19293,12 +19084,14 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
   document.addEventListener("focusin", event => {
     if (!isTextEntryControl(event.target)) return;
     beginSoftwareKeyboardViewportSession();
+    if (event.target.classList.contains("name-input")) scheduleFocusedNameInputVisibilityAdjustment();
   });
 
   document.addEventListener("focusout", event => {
     if (!isTextEntryControl(event.target)) return;
     requestAnimationFrame(() => {
       if (!isTextEntryControl(document.activeElement)) beginSoftwareKeyboardViewportSettle();
+      scheduleFocusedNameInputVisibilityAdjustment();
       scheduleLayoutUpdate();
     });
   }, { capture: true });
@@ -19359,6 +19152,7 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
     if (fullscreenExitViewportRestore) scheduleFullscreenExitViewportVerification();
     if (viewportSizeChanged) scheduleHistoryAutoScrollRetarget();
     positionMenuPopover();
+    scheduleFocusedNameInputVisibilityAdjustment();
   };
   window.visualViewport?.addEventListener("resize", handleVisualViewportChange, { passive: true });
   window.visualViewport?.addEventListener("scroll", handleVisualViewportChange, { passive: true });
@@ -19787,6 +19581,7 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
     scheduleHistoryAutoScrollRetarget();
     positionMenuPopover();
     updateHistoryScrollHint();
+    scheduleFocusedNameInputVisibilityAdjustment();
   });
 
   function resyncPersistedPageEnvironment() {
@@ -19889,7 +19684,6 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
   playLayout.classList.add("portrait");
   resetApplicationStateModel();
   refreshEditorView({ syncMode: true, participants: true, numbers: true });
-  installXr04KeyboardVisibilityDiagnostics();
   if (pendingViewportRecoveryCheckpoint) {
     void restoreViewportRecoveryCheckpoint(pendingViewportRecoveryCheckpoint);
   }

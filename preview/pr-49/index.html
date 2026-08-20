@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 
 <!-- 順番スロット -->
-<html class="transient-viewport-boot-painting" data-app-version="8.0.113" lang="ja">
+<html class="transient-viewport-boot-painting" data-app-version="8.0.114" lang="ja">
 <head>
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" name="viewport"/>
@@ -1976,13 +1976,6 @@ html body :is(.history-order,.result-num,.result-viewer-order) {
   -webkit-user-select: none;
   user-select: none;
   white-space: nowrap;
-}
-
-html[data-cp68-diagnostic] .title-version {
-  pointer-events: auto;
-  cursor: pointer;
-  padding: 12px;
-  margin: -12px;
 }
 
 
@@ -8794,12 +8787,6 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
   // Configuration
   // ---------------------------------------------------------------------------
   const APP_VERSION = document.documentElement.dataset.appVersion || "";
-  const CP68_DIAGNOSTIC_MODES = new Set(["passive", "measured"]);
-  const requestedCp68DiagnosticMode = new URLSearchParams(location.search)
-    .get("cp68-diagnostic");
-  const cp68DiagnosticMode = CP68_DIAGNOSTIC_MODES.has(requestedCp68DiagnosticMode)
-    ? requestedCp68DiagnosticMode
-    : "off";
   const MAX_PARTICIPANTS = 40;
   const NUMBER_RANGE_MIN = 2;
   const NUMBER_RANGE_MAX = 40;
@@ -8892,6 +8879,17 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
   const FULLSCREEN_EXIT_SETTLE_MS = 120;
   const FULLSCREEN_EXIT_STABLE_FRAMES = 3;
   const FULLSCREEN_EXIT_VERIFY_TIMEOUT_MS = 1600;
+  // CP68 can pass or fail when only target-local event/timer work changes.
+  // Reapply the existing compositor/root-origin synchronization at the same
+  // bounded post-activation checkpoints that exposed that timing boundary.
+  // This never selects a viewport and runs only while the exact conflict shell
+  // remains authoritative.
+  const FULLSCREEN_EXIT_ORIENTATION_CONFLICT_ROOT_RESYNC_DELAYS_MS = Object.freeze([
+    120,
+    360,
+    1000,
+    3000
+  ]);
   const PLAY_SCREEN_EXIT_GEOMETRY_TIMEOUT_MS = FULLSCREEN_EXIT_VERIFY_TIMEOUT_MS + 200;
   const FULLSCREEN_EXIT_WINDOWED_HEIGHT_TOLERANCE_PX = 12;
   const FULLSCREEN_EXIT_VISUAL_DEPARTURE_TOLERANCE_PX = 12;
@@ -9053,317 +9051,6 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
   const numberRangeInput = $("numberRangeInput");
   const createNumbersBtn = $("createNumbersBtn");
   const numberGrid = $("numberGrid");
-
-
-  // Issue #48 / CP68 target-only diagnostics. Passive mode records only values
-  // the product path has already read. Measured mode uses the same event and
-  // timer schedule, then adds synchronous DOM geometry reads so observer effect
-  // can be separated from the underlying product result.
-  const CP68_DIAGNOSTIC_SCHEMA_VERSION = 1;
-  const CP68_DIAGNOSTIC_STORAGE_KEY = `order-slot-cp68-diagnostic-${APP_VERSION}-${cp68DiagnosticMode}`;
-  const CP68_DIAGNOSTIC_MAX_EVENTS = 500;
-  const cp68DiagnosticPageStartedAt = performance.now();
-  const cp68DiagnosticPageId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  let cp68DiagnosticRun = null;
-  let cp68DiagnosticGateSignature = null;
-  let cp68DiagnosticSampleGeneration = 0;
-  let cp68DiagnosticSampleTimers = [];
-
-  function cp68DiagnosticsEnabled() {
-    return cp68DiagnosticMode !== "off";
-  }
-
-  function createCp68DiagnosticRun() {
-    return {
-      schemaVersion: CP68_DIAGNOSTIC_SCHEMA_VERSION,
-      appVersion: APP_VERSION,
-      mode: cp68DiagnosticMode,
-      runId: `cp68-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      startedAtEpoch: Date.now(),
-      userAgent: navigator.userAgent,
-      pages: [],
-      eventSequence: 0,
-      events: []
-    };
-  }
-
-  function initializeCp68DiagnosticRun() {
-    if (!cp68DiagnosticsEnabled()) return;
-    const navigationType = performance.getEntriesByType?.("navigation")?.[0]?.type || "navigate";
-    let restored = null;
-    if (navigationType === "reload") {
-      try {
-        const candidate = JSON.parse(sessionStorage.getItem(CP68_DIAGNOSTIC_STORAGE_KEY) || "null");
-        if (candidate?.schemaVersion === CP68_DIAGNOSTIC_SCHEMA_VERSION
-          && candidate.appVersion === APP_VERSION
-          && candidate.mode === cp68DiagnosticMode
-          && Array.isArray(candidate.events)) restored = candidate;
-      } catch (_error) { /* Diagnostics never affect application startup. */ }
-    }
-    cp68DiagnosticRun = restored || createCp68DiagnosticRun();
-    cp68DiagnosticRun.pages = Array.isArray(cp68DiagnosticRun.pages)
-      ? cp68DiagnosticRun.pages
-      : [];
-    cp68DiagnosticRun.pages.push({
-      pageId: cp68DiagnosticPageId,
-      navigationType,
-      startedAtEpoch: Date.now()
-    });
-  }
-
-  function cp68DiagnosticViewport(value) {
-    if (!value) return null;
-    return {
-      width: roundViewportMeasurement(value.width),
-      height: roundViewportMeasurement(value.height)
-    };
-  }
-
-  function cp68DiagnosticRestoreSummary(restore = fullscreenExitViewportRestore) {
-    if (!restore) return null;
-    return {
-      phase: restore.phase,
-      orientation: restore.orientation,
-      targetSource: restore.targetSource,
-      startedAt: roundViewportMeasurement(restore.startedAt),
-      stableFrames: restore.stableFrames,
-      orientationConflictObserved: restore.orientationConflictObserved,
-      windowedTarget: cp68DiagnosticViewport(restore.windowedTarget),
-      fullscreenViewport: cp68DiagnosticViewport(restore.fullscreenViewport),
-      fullscreenVisibleViewport: cp68DiagnosticViewport(restore.fullscreenVisibleViewport),
-      candidate: cp68DiagnosticViewport(restore.candidate),
-      orientationConflictCandidate: restore.orientationConflictCandidate ? {
-        layout: cp68DiagnosticViewport(restore.orientationConflictCandidate.layout),
-        visible: cp68DiagnosticViewport(restore.orientationConflictCandidate.visible),
-        inner: cp68DiagnosticViewport(restore.orientationConflictCandidate.inner)
-      } : null
-    };
-  }
-
-  function cp68DiagnosticConflictSummary(conflict = fullscreenExitOrientationConflict) {
-    if (!conflict) return null;
-    return {
-      viewport: cp68DiagnosticViewport(conflict.viewport),
-      orientation: conflict.orientation,
-      targetSource: conflict.targetSource,
-      conflictingLayout: cp68DiagnosticViewport(conflict.conflictingLayout),
-      conflictingOrientation: conflict.conflictingOrientation,
-      conflictingTarget: cp68DiagnosticViewport(conflict.conflictingTarget),
-      conflictingSource: conflict.conflictingSource,
-      activatedAt: roundViewportMeasurement(conflict.activatedAt)
-    };
-  }
-
-  function readCp68MeasuredSnapshot() {
-    const root = document.documentElement;
-    const body = document.body;
-    const scroller = document.scrollingElement;
-    const visual = window.visualViewport;
-    const readStyle = element => {
-      if (!(element instanceof Element)) return null;
-      const style = getComputedStyle(element);
-      return {
-        position: style.position,
-        overflow: style.overflow,
-        overflowX: style.overflowX,
-        overflowY: style.overflowY,
-        width: style.width,
-        height: style.height,
-        minHeight: style.minHeight,
-        maxHeight: style.maxHeight,
-        top: style.top,
-        left: style.left,
-        transform: style.transform
-      };
-    };
-    return {
-      documentHidden: document.hidden,
-      fullscreen: isFullscreen(),
-      transition: state.fullscreenTransition,
-      screen: state.screen,
-      playPhase: state.playPhase,
-      layout: cp68DiagnosticViewport({
-        width: root.clientWidth,
-        height: root.clientHeight
-      }),
-      visible: visual ? {
-        width: roundViewportMeasurement(visual.width),
-        height: roundViewportMeasurement(visual.height),
-        offsetLeft: roundViewportMeasurement(visual.offsetLeft),
-        offsetTop: roundViewportMeasurement(visual.offsetTop),
-        pageLeft: roundViewportMeasurement(visual.pageLeft),
-        pageTop: roundViewportMeasurement(visual.pageTop),
-        scale: roundViewportMeasurement(visual.scale)
-      } : null,
-      inner: cp68DiagnosticViewport({ width: window.innerWidth, height: window.innerHeight }),
-      screenSize: {
-        width: roundViewportMeasurement(screen.width),
-        height: roundViewportMeasurement(screen.height),
-        availWidth: roundViewportMeasurement(screen.availWidth),
-        availHeight: roundViewportMeasurement(screen.availHeight)
-      },
-      display: cp68DiagnosticViewport(displayedAppViewport),
-      displayOrientation: displayedViewportOrientation,
-      expected: {
-        portrait: cp68DiagnosticViewport(expectedWindowedViewports.portrait?.viewport),
-        landscape: cp68DiagnosticViewport(expectedWindowedViewports.landscape?.viewport)
-      },
-      verified: {
-        portrait: cp68DiagnosticViewport(verifiedWindowedViewports.portrait?.viewport),
-        landscape: cp68DiagnosticViewport(verifiedWindowedViewports.landscape?.viewport)
-      },
-      restore: cp68DiagnosticRestoreSummary(),
-      conflict: cp68DiagnosticConflictSummary(),
-      rootResync: {
-        generation: rootOriginResyncGeneration,
-        reason: rootOriginResyncReason,
-        writeActive: rootOriginResyncWriteActive,
-        suppressScrollUntil: roundViewportMeasurement(rootOriginResyncSuppressScrollUntil)
-      },
-      classes: root.className,
-      cssVariables: {
-        appWidth: root.style.getPropertyValue("--app-width"),
-        appHeight: root.style.getPropertyValue("--app-height"),
-        appCoordinateHeight: root.style.getPropertyValue("--app-coordinate-height"),
-        visualOriginX: root.style.getPropertyValue("--visual-origin-x"),
-        visualOriginY: root.style.getPropertyValue("--visual-origin-y")
-      },
-      scroll: {
-        scrollingElement: scroller === root ? "html" : scroller === body ? "body" : scroller?.tagName?.toLowerCase() || null,
-        window: [roundViewportMeasurement(window.scrollX), roundViewportMeasurement(window.scrollY)],
-        html: {
-          left: roundViewportMeasurement(root.scrollLeft),
-          top: roundViewportMeasurement(root.scrollTop),
-          width: roundViewportMeasurement(root.scrollWidth),
-          height: roundViewportMeasurement(root.scrollHeight),
-          clientWidth: roundViewportMeasurement(root.clientWidth),
-          clientHeight: roundViewportMeasurement(root.clientHeight)
-        },
-        body: body ? {
-          left: roundViewportMeasurement(body.scrollLeft),
-          top: roundViewportMeasurement(body.scrollTop),
-          width: roundViewportMeasurement(body.scrollWidth),
-          height: roundViewportMeasurement(body.scrollHeight),
-          clientWidth: roundViewportMeasurement(body.clientWidth),
-          clientHeight: roundViewportMeasurement(body.clientHeight)
-        } : null
-      },
-      rects: {
-        html: readElementRect(root),
-        body: readElementRect(body),
-        appRoot: readElementRect(appRoot),
-        activeView: readElementRect(state.screen === Screen.PLAY ? slotView : setupView),
-        playTopbar: readElementRect(document.querySelector(".play-topbar")),
-        fullscreenButton: readElementRect($("fullscreenBtn")),
-        menuButton: readElementRect($("menuBtn")),
-        mainButton: readElementRect(mainButton),
-        resetModal: readElementRect(resetModal),
-        confirmModal: readElementRect(confirmModal)
-      },
-      styles: {
-        html: readStyle(root),
-        body: readStyle(body),
-        appRoot: readStyle(appRoot),
-        activeView: readStyle(state.screen === Screen.PLAY ? slotView : setupView)
-      }
-    };
-  }
-
-  function recordCp68Diagnostic(eventName, detail = null, { measure = false } = {}) {
-    if (!cp68DiagnosticRun) return;
-    const event = {
-      sequence: ++cp68DiagnosticRun.eventSequence,
-      pageId: cp68DiagnosticPageId,
-      t: roundViewportMeasurement(performance.now() - cp68DiagnosticPageStartedAt),
-      name: eventName,
-      detail
-    };
-    if (measure && cp68DiagnosticMode === "measured") {
-      event.measured = readCp68MeasuredSnapshot();
-    }
-    cp68DiagnosticRun.events.push(event);
-    if (cp68DiagnosticRun.events.length > CP68_DIAGNOSTIC_MAX_EVENTS) {
-      cp68DiagnosticRun.events.splice(0, cp68DiagnosticRun.events.length - CP68_DIAGNOSTIC_MAX_EVENTS);
-    }
-  }
-
-  function recordCp68DiagnosticGate(reason, detail = null) {
-    if (!cp68DiagnosticRun) return;
-    let signature = reason;
-    try { signature += `:${JSON.stringify(detail)}`; } catch (_error) { /* Keep the reason-only signature. */ }
-    if (signature === cp68DiagnosticGateSignature) return;
-    cp68DiagnosticGateSignature = signature;
-    recordCp68Diagnostic("orientation-conflict-gate", { reason, ...detail });
-  }
-
-  function persistCp68Diagnostics() {
-    if (!cp68DiagnosticRun) return false;
-    try {
-      sessionStorage.setItem(CP68_DIAGNOSTIC_STORAGE_KEY, JSON.stringify(cp68DiagnosticRun));
-      return true;
-    } catch (_error) {
-      return false;
-    }
-  }
-
-  function clearCp68DiagnosticSamples() {
-    cp68DiagnosticSampleGeneration += 1;
-    for (const id of cp68DiagnosticSampleTimers) clearTimeout(id);
-    cp68DiagnosticSampleTimers = [];
-  }
-
-  function scheduleCp68DiagnosticSamples(reason) {
-    if (!cp68DiagnosticRun) return;
-    clearCp68DiagnosticSamples();
-    const generation = cp68DiagnosticSampleGeneration;
-    const sample = label => {
-      if (generation !== cp68DiagnosticSampleGeneration) return;
-      recordCp68Diagnostic("post-exit-sample", {
-        reason,
-        label,
-        restore: cp68DiagnosticRestoreSummary(),
-        conflict: cp68DiagnosticConflictSummary()
-      }, { measure: true });
-    };
-    requestAnimationFrame(() => sample("next-frame"));
-    for (const delay of [120, 360, 1000, 3000]) {
-      const id = setTimeout(() => {
-        cp68DiagnosticSampleTimers = cp68DiagnosticSampleTimers.filter(value => value !== id);
-        sample(`+${delay}ms`);
-      }, delay);
-      cp68DiagnosticSampleTimers.push(id);
-    }
-  }
-
-  async function copyCp68Diagnostics() {
-    if (!cp68DiagnosticRun) return false;
-    recordCp68Diagnostic("diagnostic-export-requested", null, { measure: true });
-    persistCp68Diagnostics();
-    const text = JSON.stringify(cp68DiagnosticRun, null, 2);
-    try {
-      await navigator.clipboard.writeText(text);
-    } catch (_error) {
-      const textarea = document.createElement("textarea");
-      textarea.value = text;
-      textarea.setAttribute("readonly", "");
-      textarea.style.position = "fixed";
-      textarea.style.opacity = "0";
-      document.body.appendChild(textarea);
-      textarea.select();
-      const copied = document.execCommand("copy");
-      textarea.remove();
-      if (!copied) return false;
-    }
-    showToast("CP68診断ログをコピーしました", { duration: 2600 });
-    return true;
-  }
-
-  initializeCp68DiagnosticRun();
-  window.addEventListener("pagehide", () => {
-    if (!cp68DiagnosticRun) return;
-    recordCp68Diagnostic("pagehide", { hidden: document.hidden }, { measure: true });
-    persistCp68Diagnostics();
-  });
 
 
   const LEGACY_VIEWPORT_DIAGNOSTIC_STORAGE_KEYS = Object.freeze([
@@ -11430,6 +11117,8 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
   let rootOriginResyncSuppressScrollUntil = 0;
   let fullscreenExitViewportRestore = null;
   let fullscreenExitOrientationConflict = null;
+  let fullscreenExitOrientationConflictRootResyncGeneration = 0;
+  const fullscreenExitOrientationConflictRootResyncTimers = new Set();
   let fullscreenExitVerificationFrame = null;
   let innerRecoveryCandidate = null;
   let innerRecoveryQuietTimer = null;
@@ -11816,11 +11505,6 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
 
   function abandonRootOriginResync(generation, reason, blockReason) {
     if (generation !== rootOriginResyncGeneration) return;
-    recordCp68Diagnostic("root-origin-resync-abandoned", {
-      generation,
-      reason,
-      blockReason
-    }, { measure: true });
     cancelScheduledRootOriginResync();
     rootOriginResyncReason = null;
     rootOriginResyncWriteActive = false;
@@ -11838,10 +11522,6 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
       TransientViewportPaintReason.ROOT_ORIGIN_RESYNC,
       `root-origin-resync-complete:${reason}`
     );
-    recordCp68Diagnostic("root-origin-resync-finished", {
-      generation,
-      reason
-    }, { measure: true });
   }
 
   function runRootOriginResyncFrame(generation, reason, frameNumber) {
@@ -11870,13 +11550,6 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
     void appRoot.getBoundingClientRect().top;
 
     const after = readRootOriginResyncObservation();
-    recordCp68Diagnostic("root-origin-resync-frame", {
-      generation,
-      reason,
-      frameNumber,
-      before,
-      after
-    });
 
     if (frameNumber < ROOT_ORIGIN_RESYNC_WRITE_FRAMES) {
       rootOriginResyncFrame = requestAnimationFrame(() => {
@@ -11901,18 +11574,10 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
       if (!recoveryObservation.suppressedRootResyncReasons.has(reason)) {
         recoveryObservation.suppressedRootResyncReasons.add(reason);
       }
-      recordCp68Diagnostic("root-origin-resync-suppressed", {
-        reason,
-        surface: "viewport-recovery-post-restore"
-      });
       return false;
     }
     const blockReason = rootOriginResyncBlockReason();
     if (blockReason) {
-      recordCp68Diagnostic("root-origin-resync-not-scheduled", {
-        reason,
-        blockReason
-      });
       return false;
     }
 
@@ -11943,15 +11608,6 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
     if (delay > 0) rootOriginResyncTimer = setTimeout(start, delay);
     else start();
 
-    recordCp68Diagnostic("root-origin-resync-scheduled", {
-      generation,
-      reason,
-      delay,
-      layout: cp68DiagnosticViewport(layout),
-      visible: cp68DiagnosticViewport(visible),
-      displayed: cp68DiagnosticViewport(displayed)
-    });
-
     return true;
   }
 
@@ -11976,18 +11632,6 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
         : null;
     const recoveryOrientation = completedRestore?.orientation
       || (recoveryTarget ? getViewportOrientation(recoveryTarget) : null);
-
-    if (completedRestore) {
-      recordCp68Diagnostic("fullscreen-exit-restore-clearing", {
-        preservePaint,
-        reason,
-        scheduleResidualRecovery,
-        armRotationRecovery,
-        recoveryTarget: cp68DiagnosticViewport(recoveryTarget),
-        recoveryOrientation,
-        restore: cp68DiagnosticRestoreSummary(completedRestore)
-      }, { measure: true });
-    }
 
     fullscreenExitViewportRestore = null;
     fullscreenSnapshotFrozenForExit = false;
@@ -13545,84 +13189,38 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
     layout = getViewportSize(),
     visible = getVisibleViewportSize()
   ) {
-    if (!restore) return null;
-    const reject = (reason, extra = null) => {
-      if (cp68DiagnosticRun) {
-        recordCp68DiagnosticGate(reason, {
-          layout: cp68DiagnosticViewport(layout),
-          visible: cp68DiagnosticViewport(visible),
-          restore: cp68DiagnosticRestoreSummary(restore),
-          ...extra
-        });
-      }
-      return null;
-    };
-    if (!FULLSCREEN_EXIT_ORIENTATION_CONFLICT_RECOVERY_ENABLED) {
-      return reject("recovery-disabled");
-    }
-    if (!restore.windowedTarget) return reject("windowed-target-missing");
-    if (!restore.fullscreenViewport) return reject("fullscreen-snapshot-missing");
+    if (!FULLSCREEN_EXIT_ORIENTATION_CONFLICT_RECOVERY_ENABLED
+      || !restore?.windowedTarget
+      || !restore.fullscreenViewport) return null;
 
     const target = restore.windowedTarget;
     const targetOrientation = restore.orientation;
     const layoutOrientation = getViewportOrientation(layout);
-    if (targetOrientation !== "portrait") {
-      return reject("target-not-portrait", { targetOrientation });
-    }
-    if (layoutOrientation !== "landscape") {
-      return reject("layout-not-landscape", { layoutOrientation });
-    }
-    if (viewportWidthsMatch(layout, target)) {
-      return reject("layout-width-matches-target", {
-        target: cp68DiagnosticViewport(target),
-        layoutOrientation
-      });
-    }
+    if (targetOrientation !== "portrait"
+      || layoutOrientation !== "landscape"
+      || viewportWidthsMatch(layout, target)) return null;
 
     const fullscreenOrientation = getViewportOrientation(restore.fullscreenViewport);
-    if (fullscreenOrientation !== targetOrientation) {
-      return reject("fullscreen-snapshot-orientation-mismatch", {
-        fullscreenOrientation,
-        targetOrientation
-      });
-    }
+    if (fullscreenOrientation !== targetOrientation) return null;
 
     const inner = {
       width: Math.max(1, Number(window.innerWidth) || 1),
       height: Math.max(1, Number(window.innerHeight) || 1)
     };
-    if (!viewportWidthsMatch(visible, target)) {
-      return reject("visual-width-mismatch", {
-        target: cp68DiagnosticViewport(target),
-        inner: cp68DiagnosticViewport(inner)
-      });
-    }
-    if (!viewportWidthsMatch(inner, target)) {
-      return reject("inner-width-mismatch", {
-        target: cp68DiagnosticViewport(target),
-        inner: cp68DiagnosticViewport(inner)
-      });
-    }
+    if (!viewportWidthsMatch(visible, target) || !viewportWidthsMatch(inner, target)) return null;
 
     const visualScale = Number(window.visualViewport?.scale) || 1;
-    if (document.hidden) return reject("document-hidden");
-    if (isTextEntryControl(document.activeElement)) return reject("text-entry-active");
-    if (Math.abs(visualScale - 1) > PAGE_ZOOM_SCALE_TOLERANCE) {
-      return reject("page-zoom", { visualScale: roundViewportMeasurement(visualScale) });
-    }
+    if (document.hidden
+      || isTextEntryControl(document.activeElement)
+      || Math.abs(visualScale - 1) > PAGE_ZOOM_SCALE_TOLERANCE) return null;
 
     const conflictingAuthority = getAuthoritativeWindowedViewport(layoutOrientation, layout);
-    if (!conflictingAuthority) return reject("conflicting-authority-missing");
-    if (!viewportDimensionsMatch(
+    if (!conflictingAuthority
+      || !viewportDimensionsMatch(
         conflictingAuthority.viewport,
         layout,
         FULLSCREEN_EXIT_WINDOWED_HEIGHT_TOLERANCE_PX
-      )) {
-      return reject("conflicting-authority-layout-mismatch", {
-        conflictingTarget: cp68DiagnosticViewport(conflictingAuthority.viewport),
-        conflictingSource: conflictingAuthority.source
-      });
-    }
+      )) return null;
 
     const fullscreenVisibleReference = restore.fullscreenVisibleViewport
       || restore.fullscreenViewport;
@@ -13636,7 +13234,7 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
       FULLSCREEN_EXIT_VISUAL_DEPARTURE_TOLERANCE_PX
     );
 
-    const observation = {
+    return {
       target: { ...target },
       targetOrientation,
       targetSource: restore.targetSource || "expected-windowed",
@@ -13650,25 +13248,6 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
         && !isFullscreenTransitionActive()
         && browserVisibleDepartedFullscreen
     };
-    if (cp68DiagnosticRun) {
-      recordCp68DiagnosticGate(
-        observation.confirmable ? "matched-confirmable" : "matched-awaiting-departure",
-        {
-          target: cp68DiagnosticViewport(observation.target),
-          targetOrientation,
-          targetSource: observation.targetSource,
-          layout: cp68DiagnosticViewport(layout),
-          layoutOrientation,
-          visible: cp68DiagnosticViewport(visible),
-          inner: cp68DiagnosticViewport(inner),
-          conflictingTarget: cp68DiagnosticViewport(observation.conflictingTarget),
-          conflictingSource: observation.conflictingSource,
-          browserVisibleDepartedFullscreen,
-          restore: cp68DiagnosticRestoreSummary(restore)
-        }
-      );
-    }
-    return observation;
   }
 
   function sameFullscreenExitOrientationConflictCandidate(candidate, observation) {
@@ -13678,8 +13257,46 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
       && viewportDimensionsMatch(candidate.inner, observation.inner));
   }
 
+  function cancelFullscreenExitOrientationConflictRootResynchronization() {
+    fullscreenExitOrientationConflictRootResyncGeneration += 1;
+    for (const timer of fullscreenExitOrientationConflictRootResyncTimers) {
+      clearTimeout(timer);
+    }
+    fullscreenExitOrientationConflictRootResyncTimers.clear();
+  }
+
+  function scheduleFullscreenExitOrientationConflictRootResynchronization(conflict) {
+    cancelFullscreenExitOrientationConflictRootResynchronization();
+    const generation = fullscreenExitOrientationConflictRootResyncGeneration;
+
+    for (const delayMs of FULLSCREEN_EXIT_ORIENTATION_CONFLICT_ROOT_RESYNC_DELAYS_MS) {
+      const timer = setTimeout(() => {
+        fullscreenExitOrientationConflictRootResyncTimers.delete(timer);
+        if (generation !== fullscreenExitOrientationConflictRootResyncGeneration
+          || conflict !== fullscreenExitOrientationConflict) return;
+        if (rootOriginResyncBlockReason()
+          || isFullscreen()
+          || isFullscreenTransitionActive()) {
+          cancelFullscreenExitOrientationConflictRootResynchronization();
+          return;
+        }
+
+        const layout = getViewportSize();
+        const visible = getVisibleViewportSize();
+        const displayed = getFullscreenExitOrientationConflictDisplayedViewport(layout, visible);
+        if (!displayed || conflict !== fullscreenExitOrientationConflict) return;
+
+        scheduleLayoutUpdate();
+        scheduleRootOriginResynchronization(
+          `fullscreen-exit-orientation-conflict:${delayMs}ms`
+        );
+      }, delayMs);
+      fullscreenExitOrientationConflictRootResyncTimers.add(timer);
+    }
+  }
+
   function activateFullscreenExitOrientationConflict(observation) {
-    fullscreenExitOrientationConflict = {
+    const conflict = {
       viewport: { ...observation.target },
       orientation: observation.targetOrientation,
       targetSource: observation.targetSource,
@@ -13689,33 +13306,17 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
       conflictingSource: observation.conflictingSource,
       activatedAt: performance.now()
     };
+    fullscreenExitOrientationConflict = conflict;
     document.documentElement.classList.add("fullscreen-exit-orientation-conflict-shell");
-    recordCp68Diagnostic("orientation-conflict-activated", {
-      observation: {
-        target: cp68DiagnosticViewport(observation.target),
-        targetOrientation: observation.targetOrientation,
-        targetSource: observation.targetSource,
-        layout: cp68DiagnosticViewport(observation.layout),
-        layoutOrientation: observation.layoutOrientation,
-        visible: cp68DiagnosticViewport(observation.visible),
-        inner: cp68DiagnosticViewport(observation.inner),
-        conflictingTarget: cp68DiagnosticViewport(observation.conflictingTarget),
-        conflictingSource: observation.conflictingSource
-      },
-      conflict: cp68DiagnosticConflictSummary()
-    }, { measure: true });
-    scheduleCp68DiagnosticSamples("orientation-conflict-activated");
+    scheduleFullscreenExitOrientationConflictRootResynchronization(conflict);
   }
 
   function clearFullscreenExitOrientationConflict(reason = "cleared") {
     const conflict = fullscreenExitOrientationConflict;
     if (!conflict) return false;
     fullscreenExitOrientationConflict = null;
+    cancelFullscreenExitOrientationConflictRootResynchronization();
     document.documentElement.classList.remove("fullscreen-exit-orientation-conflict-shell");
-    recordCp68Diagnostic("orientation-conflict-cleared", {
-      reason,
-      conflict: cp68DiagnosticConflictSummary(conflict)
-    }, { measure: true });
     return true;
   }
 
@@ -13732,12 +13333,6 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
     const innerMatchesTargetWidth = viewportWidthsMatch(inner, conflict.viewport);
 
     if (layoutMatchesTargetWidth && visibleMatchesTargetWidth && innerMatchesTargetWidth) {
-      recordCp68DiagnosticGate("active-browser-geometry-recovered", {
-        layout: cp68DiagnosticViewport(layout),
-        visible: cp68DiagnosticViewport(visible),
-        inner: cp68DiagnosticViewport(inner),
-        conflict: cp68DiagnosticConflictSummary(conflict)
-      });
       clearFullscreenExitOrientationConflict("browser-geometry-recovered");
       return null;
     }
@@ -13745,33 +13340,15 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
     if (viewportWidthsMatch(layout, visible)
       && viewportWidthsMatch(layout, inner)
       && !layoutMatchesTargetWidth) {
-      recordCp68DiagnosticGate("active-independent-environment-change", {
-        layout: cp68DiagnosticViewport(layout),
-        visible: cp68DiagnosticViewport(visible),
-        inner: cp68DiagnosticViewport(inner),
-        conflict: cp68DiagnosticConflictSummary(conflict)
-      });
       clearFullscreenExitOrientationConflict("independent-environment-change");
       return null;
     }
 
     if (visibleMatchesTargetWidth && innerMatchesTargetWidth) {
       clearWindowedEnvironmentCandidate();
-      recordCp68DiagnosticGate("active-logical-shell-held", {
-        layout: cp68DiagnosticViewport(layout),
-        visible: cp68DiagnosticViewport(visible),
-        inner: cp68DiagnosticViewport(inner),
-        conflict: cp68DiagnosticConflictSummary(conflict)
-      });
       return setDisplayedAppViewport(conflict.viewport, conflict.orientation);
     }
 
-    recordCp68DiagnosticGate("active-target-width-no-longer-observed", {
-      layout: cp68DiagnosticViewport(layout),
-      visible: cp68DiagnosticViewport(visible),
-      inner: cp68DiagnosticViewport(inner),
-      conflict: cp68DiagnosticConflictSummary(conflict)
-    });
     clearFullscreenExitOrientationConflict("target-width-no-longer-observed");
     return null;
   }
@@ -13790,10 +13367,6 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
     }
     lastFullscreenLayoutViewport = { ...layout };
     lastFullscreenVisibleViewport = { ...getVisibleViewportSize() };
-    recordCp68Diagnostic("fullscreen-snapshot-captured", {
-      layout: cp68DiagnosticViewport(lastFullscreenLayoutViewport),
-      visible: cp68DiagnosticViewport(lastFullscreenVisibleViewport)
-    });
   }
 
   function beginFullscreenExitViewportRestore(fullscreenViewport = null, fullscreenVisibleViewport = null) {
@@ -13823,14 +13396,6 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
       orientationConflictCandidate: null,
       orientationConflictObserved: false
     };
-    recordCp68Diagnostic("fullscreen-exit-restore-started", {
-      authority: authority ? {
-        viewport: cp68DiagnosticViewport(authority.viewport),
-        source: authority.source
-      } : null,
-      restore: cp68DiagnosticRestoreSummary(fullscreenExitViewportRestore)
-    }, { measure: true });
-    scheduleCp68DiagnosticSamples("fullscreen-exit-restore-started");
     beginTransientViewportPaintSession(
       TransientViewportPaintReason.FULLSCREEN_EXIT,
       fullscreenSnapshot,
@@ -13856,13 +13421,6 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
     const layout = getViewportSize();
     const visible = getVisibleViewportSize();
     const elapsed = performance.now() - restore.startedAt;
-    recordCp68Diagnostic("fullscreen-exit-verification-frame", {
-      elapsed: roundViewportMeasurement(elapsed),
-      layout: cp68DiagnosticViewport(layout),
-      visible: cp68DiagnosticViewport(visible),
-      inner: cp68DiagnosticViewport({ width: window.innerWidth, height: window.innerHeight }),
-      restore: cp68DiagnosticRestoreSummary(restore)
-    });
     const orientationConflict = getFullscreenExitOrientationConflictObservation(
       restore,
       layout,
@@ -13878,10 +13436,6 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
         restore.orientationConflictCandidate = null;
         restore.candidate = null;
         restore.stableFrames = 0;
-        recordCp68Diagnostic("orientation-conflict-awaiting-windowed-visible", {
-          elapsed: roundViewportMeasurement(elapsed),
-          restore: cp68DiagnosticRestoreSummary(restore)
-        });
         return;
       }
 
@@ -13899,14 +13453,6 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
         };
         restore.stableFrames = 1;
       }
-
-      recordCp68Diagnostic("orientation-conflict-candidate-frame", {
-        elapsed: roundViewportMeasurement(elapsed),
-        stableFrames: restore.stableFrames,
-        requiredFrames: FULLSCREEN_EXIT_STABLE_FRAMES,
-        requiredMs: FULLSCREEN_EXIT_SETTLE_MS,
-        restore: cp68DiagnosticRestoreSummary(restore)
-      });
 
       if (elapsed >= FULLSCREEN_EXIT_SETTLE_MS
         && restore.stableFrames >= FULLSCREEN_EXIT_STABLE_FRAMES) {
@@ -14109,16 +13655,9 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
 
   function scheduleFullscreenExitViewportVerification() {
     if (!fullscreenExitViewportRestore || fullscreenExitVerificationFrame !== null) return;
-    recordCp68Diagnostic("fullscreen-exit-verification-scheduled", {
-      restore: cp68DiagnosticRestoreSummary()
-    });
     fullscreenExitVerificationFrame = requestAnimationFrame(() => {
       fullscreenExitVerificationFrame = null;
       if (!fullscreenExitViewportRestore || isFullscreen()) return;
-
-      recordCp68Diagnostic("fullscreen-exit-verification-raf", {
-        restore: cp68DiagnosticRestoreSummary()
-      });
 
       // Verification never owns painting and never enters a terminal holding
       // state. If a previous verified baseline does not return within the
@@ -19618,12 +19157,6 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
     updateFullscreenSafeArea();
   };
   const handleFullscreenChange = () => {
-    recordCp68Diagnostic("fullscreenchange-received", {
-      fullscreen: isFullscreen(),
-      transition: state.fullscreenTransition,
-      lastLayoutSnapshot: cp68DiagnosticViewport(lastFullscreenLayoutViewport),
-      lastVisibleSnapshot: cp68DiagnosticViewport(lastFullscreenVisibleViewport)
-    }, { measure: true });
     invalidateInFlightLayoutInput();
     resetDocumentScrollPosition();
     if (isFullscreen()) {
@@ -19649,12 +19182,6 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
     updateHistoryScrollHint();
     scheduleAllScrollEdgeUpdates();
     syncWakeLockState();
-    recordCp68Diagnostic("fullscreenchange-applied", {
-      fullscreen: isFullscreen(),
-      transition: state.fullscreenTransition,
-      restore: cp68DiagnosticRestoreSummary(),
-      conflict: cp68DiagnosticConflictSummary()
-    }, { measure: true });
   };
   document.addEventListener("fullscreenchange", handleFullscreenChange);
   document.addEventListener("webkitfullscreenchange", handleFullscreenChange);
@@ -19665,15 +19192,6 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
     const next = { width: visual?.width || innerWidth, height: visual?.height || innerHeight };
     const viewportSizeChanged = Math.abs(next.width - previousVisualViewportSize.width) > 1
       || Math.abs(next.height - previousVisualViewportSize.height) > 1;
-    recordCp68Diagnostic("visual-viewport-change", {
-      previous: cp68DiagnosticViewport(previousVisualViewportSize),
-      next: cp68DiagnosticViewport(next),
-      viewportSizeChanged,
-      fullscreen: isFullscreen(),
-      transition: state.fullscreenTransition,
-      restore: cp68DiagnosticRestoreSummary(),
-      conflict: cp68DiagnosticConflictSummary()
-    });
     if (Math.abs(next.width - previousVisualViewportSize.width) > 80 || Math.abs(next.height - previousVisualViewportSize.height) > 80) invalidateInFlightLayoutInput();
     lastVisualViewportSize = next;
     if (isFullscreen()) captureFullscreenViewportSnapshot();
@@ -19693,12 +19211,6 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
   window.visualViewport?.addEventListener("resize", handleVisualViewportChange, { passive: true });
   window.visualViewport?.addEventListener("scroll", handleVisualViewportChange, { passive: true });
   window.addEventListener("scroll", () => {
-    recordCp68Diagnostic("window-scroll", {
-      rootResyncWriteActive,
-      rootResyncReason: rootOriginResyncReason,
-      browserUiResidualRecoveryActive: Boolean(browserUiResidualRecovery),
-      viewportRecoveryObservationActive: Boolean(viewportRecoveryPostRestoreObservation)
-    }, { measure: true });
     updateVisualViewportOriginCompensation();
     if (browserUiResidualRecovery?.suppressInvariant) {
       return;
@@ -19889,13 +19401,6 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
   }
 
   document.addEventListener("visibilitychange", () => {
-    recordCp68Diagnostic("visibilitychange", {
-      hidden: document.hidden,
-      visibilityState: document.visibilityState,
-      fullscreen: isFullscreen(),
-      restore: cp68DiagnosticRestoreSummary(),
-      conflict: cp68DiagnosticConflictSummary()
-    }, { measure: true });
     if (document.hidden) handleDocumentHidden();
     else handleDocumentVisible();
   });
@@ -20095,23 +19600,12 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
   }
 
   window.addEventListener("orientationchange", () => {
-    recordCp68Diagnostic("orientationchange-received", {
-      fullscreen: isFullscreen(),
-      transition: state.fullscreenTransition,
-      restore: cp68DiagnosticRestoreSummary(),
-      conflict: cp68DiagnosticConflictSummary()
-    }, { measure: true });
     invalidateInFlightLayoutInput();
     clearFullscreenExitOrientationConflict("orientationchange");
     beginOrientationViewportTransition();
     resetDocumentScrollPosition();
     scheduleHistoryAutoScrollRetarget(UI_TIMING.orientationSettle + 40);
     requestAnimationFrame(() => {
-      recordCp68Diagnostic("orientationchange-raf", {
-        fullscreen: isFullscreen(),
-        restore: cp68DiagnosticRestoreSummary(),
-        conflict: cp68DiagnosticConflictSummary()
-      }, { measure: true });
       if (isFullscreen()) captureFullscreenViewportSnapshot();
       scheduleSevereViewportRecoveryCheck("orientationchange");
       scheduleLayoutUpdate();
@@ -20119,22 +19613,11 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
     });
     // Mobile browser chrome can settle after the first orientation frame.
     setTimeout(() => {
-      recordCp68Diagnostic("orientationchange-settled", {
-        fullscreen: isFullscreen(),
-        restore: cp68DiagnosticRestoreSummary(),
-        conflict: cp68DiagnosticConflictSummary()
-      }, { measure: true });
       if (isFullscreen()) captureFullscreenViewportSnapshot();
       scheduleLayoutUpdate();
     }, UI_TIMING.orientationSettle);
   });
   window.addEventListener("resize", () => {
-    recordCp68Diagnostic("window-resize", {
-      fullscreen: isFullscreen(),
-      transition: state.fullscreenTransition,
-      restore: cp68DiagnosticRestoreSummary(),
-      conflict: cp68DiagnosticConflictSummary()
-    }, { measure: true });
     if (browserUiResidualRecovery
       && !viewportDimensionsMatch(
         getViewportSize(),
@@ -20246,36 +19729,9 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
   syncReducedEffectsClass();
   if (titleVersion) {
     titleVersion.textContent = APP_VERSION ? `v${APP_VERSION}` : "";
-    if (cp68DiagnosticRun) {
-      document.documentElement.dataset.cp68Diagnostic = cp68DiagnosticMode;
-      titleVersion.textContent += `・CP68 ${cp68DiagnosticMode}`;
-      titleVersion.removeAttribute("aria-hidden");
-      titleVersion.setAttribute("role", "button");
-      titleVersion.setAttribute("tabindex", "0");
-      titleVersion.setAttribute("aria-label", "CP68診断ログをコピー");
-      titleVersion.title = "タップしてCP68診断ログをコピー";
-      const exportDiagnostics = () => {
-        void copyCp68Diagnostics().then(copied => {
-          if (!copied) showToast("CP68診断ログをコピーできませんでした", { duration: 3200 });
-        });
-      };
-      titleVersion.addEventListener("click", exportDiagnostics);
-      titleVersion.addEventListener("keydown", event => {
-        if (event.key !== "Enter" && event.key !== " ") return;
-        event.preventDefault();
-        exportDiagnostics();
-      });
-    }
   }
   discardLegacyViewportDiagnostics();
   updateViewportCssVariables();
-  recordCp68Diagnostic("initialization", {
-    mode: cp68DiagnosticMode,
-    navigationType: performance.getEntriesByType?.("navigation")?.[0]?.type || "navigate",
-    restore: cp68DiagnosticRestoreSummary(),
-    conflict: cp68DiagnosticConflictSummary()
-  }, { measure: true });
-  persistCp68Diagnostics();
   setIconButton($("soundBtn"), state.soundOn ? iconMarkup.soundOn : iconMarkup.soundOff, state.soundOn ? "音を消す" : "音を出す", "音声");
   $("soundBtn").setAttribute("aria-pressed", String(state.soundOn));
   updateFullscreenIcon();

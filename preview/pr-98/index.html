@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 
 <!-- 順番スロット -->
-<html class="transient-viewport-boot-painting" data-app-version="8.0.128" lang="ja">
+<html class="transient-viewport-boot-painting" data-app-version="8.0.129" lang="ja">
 <head>
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" name="viewport"/>
@@ -8788,8 +8788,8 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
   // ---------------------------------------------------------------------------
   const APP_VERSION = document.documentElement.dataset.appVersion || "";
   const TOP_EDGE_OBSERVATION_CASE_QUERY = (new URLSearchParams(location.search)
-    .get("t67-recovery-diagnostic") || "").toUpperCase();
-  const TOP_EDGE_OBSERVATION_CASE = ["P", "C"].includes(TOP_EDGE_OBSERVATION_CASE_QUERY)
+    .get("t67-rotation-timing") || "").toUpperCase();
+  const TOP_EDGE_OBSERVATION_CASE = ["I", "W"].includes(TOP_EDGE_OBSERVATION_CASE_QUERY)
     ? TOP_EDGE_OBSERVATION_CASE_QUERY
     : null;
   const MAX_PARTICIPANTS = 40;
@@ -11172,42 +11172,38 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
   let innerRecoveryQuietTimer = null;
   let orientationViewportTransition = null;
 
-  // Issue #67 v8.0.127 follow-up. P records the complete event, scheduler,
-  // A1+C, and qualified-retry lifecycle without adding a probe. C records the
-  // independent CP68 orientation-conflict and PLAY-exit path. Neither case
-  // changes product geometry, timing, recovery decisions, or user input.
-  const TOP_EDGE_OBSERVATION_SCHEMA_VERSION = 2;
+  // Issue #67 v8.0.128 follow-up. I and W record the same product event,
+  // scheduler, A1+C, and qualified-retry lifecycle while changing only whether
+  // the top-edge action follows ordinary rotation immediately or after 5s.
+  // Neither case adds a probe or changes product geometry and recovery timing.
+  const TOP_EDGE_OBSERVATION_SCHEMA_VERSION = 3;
   const TOP_EDGE_OBSERVATION_DEFINITIONS = {
-    P: {
-      observationMode: "product-lifecycle-passive",
-      diagnosisFocus: "post-fullscreen-browser-ui-recovery-and-qualified-retry",
+    I: {
+      observationMode: "rotation-immediate-passive",
+      diagnosisFocus: "top-edge-during-post-fullscreen-ordinary-rotation-recovery",
       scheduledReevaluation: false
     },
-    C: {
-      observationMode: "cp68-state-passive",
-      diagnosisFocus: "fullscreen-orientation-conflict-and-play-screen-exit",
+    W: {
+      observationMode: "rotation-wait-control-passive",
+      diagnosisFocus: "top-edge-after-post-fullscreen-ordinary-rotation-settle",
       scheduledReevaluation: false
     }
   };
   const TOP_EDGE_OBSERVATION_MARKERS = {
-    P: [
-      { id: "P0", button: "①初期縦を記録", instruction: "PLAY到達後、初期縦向きで5秒待機した時点", action: "initial-portrait-wait", orientation: "portrait", fullscreen: false, topEdge: false },
-      { id: "P1", button: "②FS前横を記録", instruction: "縦から横へ回転し、5秒待機した時点", action: "rotate-portrait-to-landscape", orientation: "landscape", fullscreen: false, topEdge: false },
-      { id: "P2", button: "③FS横を記録", instruction: "横向きのままFullscreenへ入り、5秒待機した時点", action: "enter-fullscreen-landscape", orientation: "landscape", fullscreen: true, topEdge: false },
-      { id: "P3", button: "④解除後横を記録", instruction: "横向きのままアプリ内ボタンでFullscreenを解除し、5秒待機した時点", action: "exit-fullscreen-landscape", orientation: "landscape", fullscreen: false, topEdge: false },
-      { id: "P4", button: "⑤通常縦を記録", instruction: "Windowedで縦へ回転し、5秒待機した時点。記録後2秒以内にtop-edgeを1回操作する", action: "ordinary-rotate-landscape-to-portrait", orientation: "portrait", fullscreen: false, topEdge: false, arm: true },
-      { id: "P5", button: "⑥tap後・保存", instruction: "縦画面でtop-edgeを1回操作し、5秒待機した時点", action: "portrait-top-edge-1", orientation: "portrait", fullscreen: false, topEdge: true }
+    I: [
+      { id: "I0", button: "①初期縦を記録", instruction: "PLAY到達後、初期縦向きで5秒待機した時点", action: "initial-portrait-wait", orientation: "portrait", fullscreen: false, topEdge: false },
+      { id: "I1", button: "②FS前横を記録", instruction: "縦から横へ回転し、5秒待機した時点", action: "rotate-portrait-to-landscape", orientation: "landscape", fullscreen: false, topEdge: false },
+      { id: "I2", button: "③FS横を記録", instruction: "横向きのままFullscreenへ入り、5秒待機した時点", action: "enter-fullscreen-landscape", orientation: "landscape", fullscreen: true, topEdge: false },
+      { id: "I3", button: "④解除後横を記録", instruction: "横向きのままアプリ内ボタンでFullscreenを解除し、5秒待機した時点。記録後に縦へ回転し、縦表示が見えたら待機せずtop-edgeを1回操作する", action: "exit-fullscreen-landscape-before-immediate-rotation-top-edge", orientation: "landscape", fullscreen: false, topEdge: false, arm: true },
+      { id: "I4", button: "⑤直後tap後・保存", instruction: "縦回転後に待機せずtop-edgeを1回操作し、その後5秒待機した時点", action: "portrait-top-edge-during-rotation-recovery", orientation: "portrait", fullscreen: false, topEdge: true }
     ],
-    C: [
-      { id: "C0", button: "①初期縦を記録", instruction: "PLAY到達後、初期縦向きで5秒待機した時点", action: "initial-portrait-wait", orientation: "portrait", fullscreen: false, topEdge: false },
-      { id: "C1", button: "②FS前横を記録", instruction: "縦から横へ回転し、5秒待機した時点", action: "learn-landscape-windowed-target", orientation: "landscape", fullscreen: false, topEdge: false },
-      { id: "C2", button: "③FS横を記録", instruction: "横向きのままFullscreenへ入り、5秒待機した時点", action: "enter-fullscreen-landscape", orientation: "landscape", fullscreen: true, topEdge: false, arm: true },
-      { id: "C3", button: "④FS縦を記録", instruction: "Fullscreen中に縦へ回転し、5秒待機した時点", action: "rotate-fullscreen-landscape-to-portrait", orientation: "portrait", fullscreen: true, topEdge: false },
-      { id: "C4", button: "⑤解除後縦を記録", instruction: "縦向きのままアプリ内ボタンでFullscreenを解除し、5秒待機した時点", action: "exit-fullscreen-portrait", orientation: "portrait", fullscreen: false, topEdge: false },
-      { id: "C5", button: "⑥menu後を記録", instruction: "右上menuを開閉して表示と操作を確認した時点", action: "check-top-right-menu", orientation: "portrait", fullscreen: false, topEdge: false },
-      { id: "C6", button: "⑦主ボタン後を記録", instruction: "主ボタンを操作して表示と操作を確認した時点", action: "check-main-button", orientation: "portrait", fullscreen: false, topEdge: false },
-      { id: "C7", button: "⑧確認画面後を記録", instruction: "reset／confirmの位置と操作を確認した時点", action: "check-reset-confirm", orientation: "portrait", fullscreen: false, topEdge: false },
-      { id: "C8", button: "⑨遷移後・保存", instruction: "EDITORまたはTITLEへの遷移を試し、結果とトーストを確認した時点", action: "attempt-editor-or-title-transition", orientation: "portrait", fullscreen: false, topEdge: false }
+    W: [
+      { id: "W0", button: "①初期縦を記録", instruction: "PLAY到達後、初期縦向きで5秒待機した時点", action: "initial-portrait-wait", orientation: "portrait", fullscreen: false, topEdge: false },
+      { id: "W1", button: "②FS前横を記録", instruction: "縦から横へ回転し、5秒待機した時点", action: "rotate-portrait-to-landscape", orientation: "landscape", fullscreen: false, topEdge: false },
+      { id: "W2", button: "③FS横を記録", instruction: "横向きのままFullscreenへ入り、5秒待機した時点", action: "enter-fullscreen-landscape", orientation: "landscape", fullscreen: true, topEdge: false },
+      { id: "W3", button: "④解除後横を記録", instruction: "横向きのままアプリ内ボタンでFullscreenを解除し、5秒待機した時点", action: "exit-fullscreen-landscape", orientation: "landscape", fullscreen: false, topEdge: false },
+      { id: "W4", button: "⑤通常縦を記録", instruction: "Windowedで縦へ回転し、5秒待機した時点。記録後2秒以内にtop-edgeを1回操作する", action: "ordinary-rotate-landscape-to-portrait-wait", orientation: "portrait", fullscreen: false, topEdge: false, arm: true },
+      { id: "W5", button: "⑥待機tap後・保存", instruction: "縦回転から5秒以上待った後にtop-edgeを1回操作し、その後5秒待機した時点", action: "portrait-top-edge-after-rotation-settle", orientation: "portrait", fullscreen: false, topEdge: true }
     ]
   };
   const topEdgeObservationPageStartedAt = performance.now();
@@ -11218,14 +11214,14 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
     ? TOP_EDGE_OBSERVATION_MARKERS[TOP_EDGE_OBSERVATION_CASE]
     : [];
   const topEdgeObservationRun = TOP_EDGE_OBSERVATION_CASE ? {
-    kind: "viewport-recovery-product-lifecycle",
+    kind: "viewport-recovery-rotation-timing",
     schemaVersion: TOP_EDGE_OBSERVATION_SCHEMA_VERSION,
     appVersion: APP_VERSION,
     mode: topEdgeObservationDefinition.observationMode,
-    targetCase: `T67-RX-${TOP_EDGE_OBSERVATION_CASE}`,
+    targetCase: `T67-RT-${TOP_EDGE_OBSERVATION_CASE}`,
     observationCase: TOP_EDGE_OBSERVATION_CASE,
     plannedActions: { ...topEdgeObservationDefinition },
-    runId: `t67-recovery-lifecycle-${TOP_EDGE_OBSERVATION_CASE.toLowerCase()}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    runId: `t67-rotation-timing-${TOP_EDGE_OBSERVATION_CASE.toLowerCase()}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     startedAtEpoch: Date.now(),
     completedAtEpoch: null,
     userAgent: navigator.userAgent,
@@ -11429,7 +11425,7 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
       precedingEventCount: topEdgeObservationRun.eventSequence
     });
     const text = `${JSON.stringify(topEdgeObservationRun, null, 2)}\n`;
-    const filename = `OrderSlot_DiagnosticLog_iPadOS-Chrome_T67-RX-${TOP_EDGE_OBSERVATION_CASE}_v${APP_VERSION}.txt`;
+    const filename = `OrderSlot_DiagnosticLog_iPadOS-Chrome_T67-RT-${TOP_EDGE_OBSERVATION_CASE}_v${APP_VERSION}.txt`;
     const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -11440,7 +11436,7 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
     link.click();
     link.remove();
     setTimeout(() => URL.revokeObjectURL(url), 2000);
-    showToast(`T67-RX-${TOP_EDGE_OBSERVATION_CASE}診断ログを保存しました`, { duration: 2600 });
+    showToast(`T67-RT-${TOP_EDGE_OBSERVATION_CASE}診断ログを保存しました`, { duration: 2600 });
     return true;
   }
 
@@ -11461,12 +11457,13 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
     button.type = "button";
     button.id = "topEdgeObservationDiagnosticControl";
     button.textContent = topEdgeObservationMarkers[0].button;
-    button.setAttribute("aria-label", `T67-RX-${TOP_EDGE_OBSERVATION_CASE} ${topEdgeObservationMarkers[0].instruction}`);
+    button.setAttribute("aria-label", `T67-RT-${TOP_EDGE_OBSERVATION_CASE} ${topEdgeObservationMarkers[0].instruction}`);
     button.style.cssText = [
       "position:fixed",
       "z-index:2147483000",
       "left:max(8px, env(safe-area-inset-left))",
-      "bottom:max(8px, env(safe-area-inset-bottom))",
+      "top:50%",
+      "transform:translateY(-50%)",
       "min-width:116px",
       "min-height:44px",
       "border:1px solid rgba(255,255,255,.72)",
@@ -11497,21 +11494,21 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
         const nextMarker = topEdgeObservationMarkers[topEdgeObservationMarkerIndex];
         topEdgeObservationControlState = `awaiting-${nextMarker.id}`;
         button.textContent = nextMarker.button;
-        button.setAttribute("aria-label", `T67-RX-${TOP_EDGE_OBSERVATION_CASE} ${nextMarker.instruction}`);
+        button.setAttribute("aria-label", `T67-RT-${TOP_EDGE_OBSERVATION_CASE} ${nextMarker.instruction}`);
         showToast(`${marker.id}を記録しました`, { duration: 1400 });
         return;
       }
       topEdgeObservationControlState = "exporting";
       saveTopEdgeObservationLog();
       topEdgeObservationControlState = "exported";
-      button.textContent = `T67-RX-${TOP_EDGE_OBSERVATION_CASE}保存済み`;
+      button.textContent = `T67-RT-${TOP_EDGE_OBSERVATION_CASE}保存済み`;
       button.disabled = true;
     });
     document.body.appendChild(button);
-    document.documentElement.dataset.t67RecoveryDiagnostic = TOP_EDGE_OBSERVATION_CASE.toLowerCase();
+    document.documentElement.dataset.t67RotationTiming = TOP_EDGE_OBSERVATION_CASE.toLowerCase();
     recordTopEdgeObservation("diagnostic-run-started", {
-      query: `t67-recovery-diagnostic=${TOP_EDGE_OBSERVATION_CASE}`,
-      targetCase: `T67-RX-${TOP_EDGE_OBSERVATION_CASE}`,
+      query: `t67-rotation-timing=${TOP_EDGE_OBSERVATION_CASE}`,
+      targetCase: `T67-RT-${TOP_EDGE_OBSERVATION_CASE}`,
       plannedActions: { ...topEdgeObservationDefinition },
       expectedOperatorMarkers: topEdgeObservationMarkers.length
     });
@@ -20350,7 +20347,7 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
   if (titleVersion) {
     titleVersion.textContent = APP_VERSION ? `v${APP_VERSION}` : "";
     if (topEdgeObservationRun) {
-      titleVersion.textContent += `・T67-RX-${TOP_EDGE_OBSERVATION_CASE}`;
+      titleVersion.textContent += `・T67-RT-${TOP_EDGE_OBSERVATION_CASE}`;
     }
   }
   installTopEdgeObservationDiagnostic();

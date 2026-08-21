@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 
 <!-- 順番スロット -->
-<html class="transient-viewport-boot-painting" data-app-version="8.0.125" lang="ja">
+<html class="transient-viewport-boot-painting" data-app-version="8.0.126" lang="ja">
 <head>
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" name="viewport"/>
@@ -8787,6 +8787,11 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
   // Configuration
   // ---------------------------------------------------------------------------
   const APP_VERSION = document.documentElement.dataset.appVersion || "";
+  const TOP_EDGE_OBSERVATION_CASE_QUERY = (new URLSearchParams(location.search)
+    .get("top-edge-observation") || "").toUpperCase();
+  const TOP_EDGE_OBSERVATION_CASE = ["E", "Q"].includes(TOP_EDGE_OBSERVATION_CASE_QUERY)
+    ? TOP_EDGE_OBSERVATION_CASE_QUERY
+    : null;
   const MAX_PARTICIPANTS = 40;
   const NUMBER_RANGE_MIN = 2;
   const NUMBER_RANGE_MAX = 40;
@@ -11123,6 +11128,322 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
   let innerRecoveryCandidate = null;
   let innerRecoveryQuietTimer = null;
   let orientationViewportTransition = null;
+
+  // Issue #67 v8.0.125 follow-up. E observes only browser/window events after
+  // the operator arms the top-edge step. Q changes one variable: it reevaluates
+  // the existing product scheduler every 250ms. Neither mode changes target,
+  // app geometry, safe-area, or scroll directly. Q may start the product's
+  // already-reviewed A1+C recovery when the existing gates all pass.
+  const TOP_EDGE_OBSERVATION_SCHEMA_VERSION = 1;
+  const TOP_EDGE_OBSERVATION_PROBE_INTERVAL_MS = 250;
+  const TOP_EDGE_OBSERVATION_PROBE_DURATION_MS = 9000;
+  const TOP_EDGE_OBSERVATION_DEFINITIONS = {
+    E: {
+      observationMode: "event-only",
+      scheduledReevaluation: false,
+      probeIntervalMs: null,
+      probeDurationMs: null
+    },
+    Q: {
+      observationMode: "scheduled-query",
+      scheduledReevaluation: true,
+      probeIntervalMs: TOP_EDGE_OBSERVATION_PROBE_INTERVAL_MS,
+      probeDurationMs: TOP_EDGE_OBSERVATION_PROBE_DURATION_MS
+    }
+  };
+  const TOP_EDGE_OBSERVATION_MARKERS = [
+    { id: "O0", button: "①初期縦を記録", instruction: "PLAY到達後、初期縦向きで5秒待機した時点", action: "initial-portrait-wait", orientation: "portrait", fullscreen: false, topEdge: false },
+    { id: "O1", button: "②FS前横を記録", instruction: "縦から横へ回転し、5秒待機した時点", action: "rotate-portrait-to-landscape", orientation: "landscape", fullscreen: false, topEdge: false },
+    { id: "O2", button: "③FS横を記録", instruction: "横向きのままFullscreenへ入り、5秒待機した時点", action: "enter-fullscreen-landscape", orientation: "landscape", fullscreen: true, topEdge: false },
+    { id: "O3", button: "④解除後横を記録", instruction: "横向きのままアプリ内ボタンでFullscreenを解除し、5秒待機した時点", action: "exit-fullscreen-landscape", orientation: "landscape", fullscreen: false, topEdge: false },
+    { id: "O4", button: "⑤通常縦・観測開始", instruction: "Windowedで縦へ回転し、5秒待機した時点。記録後2秒以内にtop-edgeを1回操作する", action: "ordinary-rotate-landscape-to-portrait-and-arm", orientation: "portrait", fullscreen: false, topEdge: false },
+    { id: "O5", button: "⑥tap後・保存", instruction: "縦画面でtop-edgeを1回操作し、5秒待機した時点", action: "portrait-top-edge-1", orientation: "portrait", fullscreen: false, topEdge: true }
+  ];
+  const topEdgeObservationPageStartedAt = performance.now();
+  const topEdgeObservationDefinition = TOP_EDGE_OBSERVATION_CASE
+    ? TOP_EDGE_OBSERVATION_DEFINITIONS[TOP_EDGE_OBSERVATION_CASE]
+    : null;
+  const topEdgeObservationRun = TOP_EDGE_OBSERVATION_CASE ? {
+    kind: "browser-top-edge-notification-boundary",
+    schemaVersion: TOP_EDGE_OBSERVATION_SCHEMA_VERSION,
+    appVersion: APP_VERSION,
+    mode: topEdgeObservationDefinition.observationMode,
+    targetCase: `T67-O-${TOP_EDGE_OBSERVATION_CASE}`,
+    observationCase: TOP_EDGE_OBSERVATION_CASE,
+    plannedActions: { ...topEdgeObservationDefinition },
+    runId: `t67-top-edge-observation-${TOP_EDGE_OBSERVATION_CASE.toLowerCase()}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    startedAtEpoch: Date.now(),
+    completedAtEpoch: null,
+    userAgent: navigator.userAgent,
+    eventSequence: 0,
+    operatorMarkers: 0,
+    observationArmedAt: null,
+    events: [],
+    probeSamples: [],
+    finalSnapshot: null
+  } : null;
+  let topEdgeObservationControlState = "awaiting-O0";
+  let topEdgeObservationMarkerIndex = 0;
+  let topEdgeObservationArmedAt = null;
+  let topEdgeObservationProbeTimer = null;
+
+  function topEdgeObservationRound(value) {
+    const number = Number(value);
+    return Number.isFinite(number) ? Math.round(number * 100) / 100 : null;
+  }
+
+  function topEdgeObservationViewportCopy(viewport) {
+    if (!viewport) return null;
+    return {
+      width: topEdgeObservationRound(viewport.width),
+      height: topEdgeObservationRound(viewport.height)
+    };
+  }
+
+  function topEdgeObservationRect(element) {
+    if (!(element instanceof Element)) return null;
+    const rect = element.getBoundingClientRect();
+    return {
+      left: topEdgeObservationRound(rect.left),
+      top: topEdgeObservationRound(rect.top),
+      right: topEdgeObservationRound(rect.right),
+      bottom: topEdgeObservationRound(rect.bottom),
+      width: topEdgeObservationRound(rect.width),
+      height: topEdgeObservationRound(rect.height)
+    };
+  }
+
+  function topEdgeObservationSnapshot({ measureShell = false } = {}) {
+    const layout = getViewportSize();
+    const visible = getVisibleViewportSize();
+    const visual = window.visualViewport;
+    const eligibility = postFullscreenWindowedRotationRecoveryEligibility;
+    const recovery = postFullscreenWindowedRotationOverflowScrollRecovery;
+    const residual = browserUiViewportResidual;
+    const root = document.documentElement;
+    const scrollingElement = document.scrollingElement || root;
+    const snapshot = {
+      viewport: {
+        layout: topEdgeObservationViewportCopy(layout),
+        visible: topEdgeObservationViewportCopy(visible),
+        inner: {
+          width: topEdgeObservationRound(window.innerWidth),
+          height: topEdgeObservationRound(window.innerHeight)
+        },
+        visual: visual ? {
+          width: topEdgeObservationRound(visual.width),
+          height: topEdgeObservationRound(visual.height),
+          offsetLeft: topEdgeObservationRound(visual.offsetLeft),
+          offsetTop: topEdgeObservationRound(visual.offsetTop),
+          scale: topEdgeObservationRound(visual.scale)
+        } : null,
+        orientation: getViewportOrientation(layout)
+      },
+      app: {
+        screen: state.screen,
+        fullscreen: isFullscreen(),
+        fullscreenTransition: state.fullscreenTransition,
+        displayedViewport: topEdgeObservationViewportCopy(displayedAppViewport),
+        displayedOrientation: displayedViewportOrientation,
+        residual: residual ? {
+          orientation: residual.orientation || null,
+          visibleGap: topEdgeObservationRound(residual.visibleGap),
+          top: topEdgeObservationRound(residual.top),
+          bottom: topEdgeObservationRound(residual.bottom)
+        } : null,
+        eligibility: eligibility ? {
+          generation: eligibility.generation,
+          exitOrientation: eligibility.exitOrientation || null,
+          lastRecoveryAt: topEdgeObservationRound(eligibility.lastRecoveryAt),
+          lastCompletedRotationRecoveryAt: topEdgeObservationRound(eligibility.lastCompletedRotationRecoveryAt)
+        } : null,
+        recovery: recovery ? {
+          generation: recovery.generation,
+          experienceGeneration: recovery.experienceGeneration,
+          trigger: recovery.trigger || null,
+          triggerKind: recovery.triggerKind || null,
+          phase: recovery.phase || null,
+          requestedAt: topEdgeObservationRound(recovery.requestedAt),
+          lastBlockReason: recovery.lastBlockReason || null
+        } : null
+      },
+      scroll: {
+        windowX: topEdgeObservationRound(window.scrollX),
+        windowY: topEdgeObservationRound(window.scrollY),
+        rootTop: topEdgeObservationRound(scrollingElement.scrollTop),
+        rootRangeY: topEdgeObservationRound(scrollingElement.scrollHeight - scrollingElement.clientHeight)
+      }
+    };
+    if (measureShell) {
+      const rootStyle = getComputedStyle(root);
+      const playLayoutStyle = getComputedStyle(playLayout);
+      snapshot.shell = {
+        root: topEdgeObservationRect(root),
+        body: topEdgeObservationRect(document.body),
+        appRoot: topEdgeObservationRect(appRoot),
+        slotView: topEdgeObservationRect(slotView),
+        appHeight: rootStyle.getPropertyValue("--app-height").trim(),
+        appCoordinateHeight: rootStyle.getPropertyValue("--app-coordinate-height").trim(),
+        playSafeBottom: rootStyle.getPropertyValue("--play-safe-bottom").trim(),
+        playPaddingBottom: playLayoutStyle.paddingBottom
+      };
+    }
+    return snapshot;
+  }
+
+  function recordTopEdgeObservation(name, detail = null, { measureShell = false } = {}) {
+    if (!topEdgeObservationRun) return;
+    topEdgeObservationRun.events.push({
+      sequence: ++topEdgeObservationRun.eventSequence,
+      t: topEdgeObservationRound(performance.now() - topEdgeObservationPageStartedAt),
+      name,
+      controlState: topEdgeObservationControlState,
+      snapshot: topEdgeObservationSnapshot({ measureShell }),
+      detail
+    });
+  }
+
+  function stopTopEdgeObservationProbe() {
+    if (topEdgeObservationProbeTimer !== null) {
+      clearTimeout(topEdgeObservationProbeTimer);
+      topEdgeObservationProbeTimer = null;
+    }
+  }
+
+  function startTopEdgeObservationWindow() {
+    if (!topEdgeObservationRun || topEdgeObservationArmedAt !== null) return;
+    topEdgeObservationArmedAt = performance.now();
+    topEdgeObservationRun.observationArmedAt = topEdgeObservationRound(
+      topEdgeObservationArmedAt - topEdgeObservationPageStartedAt
+    );
+    recordTopEdgeObservation("top-edge-observation-armed", {
+      mode: topEdgeObservationRun.mode,
+      probeIntervalMs: topEdgeObservationDefinition.probeIntervalMs,
+      probeDurationMs: topEdgeObservationDefinition.probeDurationMs
+    });
+    if (!topEdgeObservationDefinition.scheduledReevaluation) return;
+
+    const deadline = topEdgeObservationArmedAt + TOP_EDGE_OBSERVATION_PROBE_DURATION_MS;
+    const sample = () => {
+      topEdgeObservationProbeTimer = null;
+      if (!topEdgeObservationRun || performance.now() > deadline) return;
+      const before = topEdgeObservationSnapshot();
+      const scheduled = schedulePostFullscreenWindowedRotationOverflowScrollRecovery(
+        "browser-ui-diagnostic-probe"
+      );
+      const after = topEdgeObservationSnapshot();
+      topEdgeObservationRun.probeSamples.push({
+        index: topEdgeObservationRun.probeSamples.length,
+        t: topEdgeObservationRound(performance.now() - topEdgeObservationPageStartedAt),
+        scheduled,
+        before,
+        after
+      });
+      topEdgeObservationProbeTimer = setTimeout(sample, TOP_EDGE_OBSERVATION_PROBE_INTERVAL_MS);
+    };
+    topEdgeObservationProbeTimer = setTimeout(sample, 100);
+  }
+
+  function saveTopEdgeObservationLog() {
+    if (!topEdgeObservationRun) return false;
+    stopTopEdgeObservationProbe();
+    topEdgeObservationRun.finalSnapshot = topEdgeObservationSnapshot({ measureShell: true });
+    topEdgeObservationRun.completedAtEpoch = Date.now();
+    recordTopEdgeObservation("diagnostic-export-requested", {
+      finalSnapshotCaptured: true,
+      operatorMarkers: topEdgeObservationRun.operatorMarkers,
+      expectedOperatorMarkers: TOP_EDGE_OBSERVATION_MARKERS.length,
+      probeSamples: topEdgeObservationRun.probeSamples.length,
+      precedingEventCount: topEdgeObservationRun.eventSequence
+    });
+    const text = `${JSON.stringify(topEdgeObservationRun, null, 2)}\n`;
+    const filename = `OrderSlot_DiagnosticLog_iPadOS-Chrome_T67-O-${TOP_EDGE_OBSERVATION_CASE}_v${APP_VERSION}.txt`;
+    const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    link.hidden = true;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+    showToast(`T67-O-${TOP_EDGE_OBSERVATION_CASE}診断ログを保存しました`, { duration: 2600 });
+    return true;
+  }
+
+  function installTopEdgeObservationDiagnostic() {
+    if (!topEdgeObservationRun) return;
+    const recordBrowserEvent = event => {
+      recordTopEdgeObservation(`browser-event:${event.type}`);
+    };
+    window.visualViewport?.addEventListener("resize", recordBrowserEvent, { passive: true });
+    window.visualViewport?.addEventListener("scroll", recordBrowserEvent, { passive: true });
+    window.addEventListener("resize", recordBrowserEvent, { passive: true });
+    window.addEventListener("scroll", recordBrowserEvent, { passive: true });
+    window.addEventListener("orientationchange", recordBrowserEvent, { passive: true });
+    document.addEventListener("fullscreenchange", recordBrowserEvent, { passive: true });
+    document.addEventListener("webkitfullscreenchange", recordBrowserEvent, { passive: true });
+
+    const button = document.createElement("button");
+    button.type = "button";
+    button.id = "topEdgeObservationDiagnosticControl";
+    button.textContent = TOP_EDGE_OBSERVATION_MARKERS[0].button;
+    button.setAttribute("aria-label", `T67-O-${TOP_EDGE_OBSERVATION_CASE} ${TOP_EDGE_OBSERVATION_MARKERS[0].instruction}`);
+    button.style.cssText = [
+      "position:fixed",
+      "z-index:2147483000",
+      "left:max(8px, env(safe-area-inset-left))",
+      "bottom:max(8px, env(safe-area-inset-bottom))",
+      "min-width:116px",
+      "min-height:44px",
+      "border:1px solid rgba(255,255,255,.72)",
+      "border-radius:12px",
+      "background:#17324d",
+      "color:#fff",
+      "font:700 13px/1.2 system-ui,sans-serif",
+      "padding:8px 12px",
+      "box-shadow:0 3px 10px rgba(0,0,0,.28)"
+    ].join(";");
+    button.addEventListener("click", () => {
+      if (topEdgeObservationMarkerIndex >= TOP_EDGE_OBSERVATION_MARKERS.length) return;
+      const marker = TOP_EDGE_OBSERVATION_MARKERS[topEdgeObservationMarkerIndex];
+      topEdgeObservationControlState = `recording-${marker.id}`;
+      topEdgeObservationRun.operatorMarkers += 1;
+      recordTopEdgeObservation("operator-sequence-marker", {
+        markerId: marker.id,
+        markerIndex: topEdgeObservationMarkerIndex,
+        instruction: marker.instruction,
+        plannedActionBeforeMarker: marker.action,
+        topEdgeExpectedBeforeMarker: marker.topEdge,
+        expectedOrientation: marker.orientation,
+        expectedFullscreen: marker.fullscreen
+      }, { measureShell: true });
+      if (marker.id === "O4") startTopEdgeObservationWindow();
+      topEdgeObservationMarkerIndex += 1;
+      if (topEdgeObservationMarkerIndex < TOP_EDGE_OBSERVATION_MARKERS.length) {
+        const nextMarker = TOP_EDGE_OBSERVATION_MARKERS[topEdgeObservationMarkerIndex];
+        topEdgeObservationControlState = `awaiting-${nextMarker.id}`;
+        button.textContent = nextMarker.button;
+        button.setAttribute("aria-label", `T67-O-${TOP_EDGE_OBSERVATION_CASE} ${nextMarker.instruction}`);
+        showToast(`${marker.id}を記録しました`, { duration: 1400 });
+        return;
+      }
+      topEdgeObservationControlState = "exporting";
+      saveTopEdgeObservationLog();
+      topEdgeObservationControlState = "exported";
+      button.textContent = `T67-O-${TOP_EDGE_OBSERVATION_CASE}保存済み`;
+      button.disabled = true;
+    });
+    document.body.appendChild(button);
+    document.documentElement.dataset.topEdgeObservationDiagnostic = TOP_EDGE_OBSERVATION_CASE.toLowerCase();
+    recordTopEdgeObservation("diagnostic-run-started", {
+      query: `top-edge-observation=${TOP_EDGE_OBSERVATION_CASE}`,
+      targetCase: `T67-O-${TOP_EDGE_OBSERVATION_CASE}`,
+      plannedActions: { ...topEdgeObservationDefinition },
+      expectedOperatorMarkers: TOP_EDGE_OBSERVATION_MARKERS.length
+    });
+  }
   let lastFullscreenLayoutViewport = null;
   let lastFullscreenVisibleViewport = null;
   let fullscreenSnapshotFrozenForExit = false;
@@ -19769,7 +20090,11 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
   syncReducedEffectsClass();
   if (titleVersion) {
     titleVersion.textContent = APP_VERSION ? `v${APP_VERSION}` : "";
+    if (topEdgeObservationRun) {
+      titleVersion.textContent += `・T67-O-${TOP_EDGE_OBSERVATION_CASE}`;
+    }
   }
+  installTopEdgeObservationDiagnostic();
   discardLegacyViewportDiagnostics();
   updateViewportCssVariables();
   setIconButton($("soundBtn"), state.soundOn ? iconMarkup.soundOn : iconMarkup.soundOff, state.soundOn ? "音を消す" : "音を出す", "音声");

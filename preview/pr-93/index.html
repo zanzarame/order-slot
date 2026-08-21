@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 
 <!-- 順番スロット -->
-<html class="transient-viewport-boot-painting" data-app-version="8.0.119" lang="ja">
+<html class="transient-viewport-boot-painting" data-app-version="8.0.120" lang="ja">
 <head>
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" name="viewport"/>
@@ -8787,8 +8787,6 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
   // Configuration
   // ---------------------------------------------------------------------------
   const APP_VERSION = document.documentElement.dataset.appVersion || "";
-  const CP59_DIAGNOSTIC_ENABLED = new URLSearchParams(location.search)
-    .get("cp59-diagnostic") === "passive";
   const MAX_PARTICIPANTS = 40;
   const NUMBER_RANGE_MIN = 2;
   const NUMBER_RANGE_MAX = 40;
@@ -9153,219 +9151,6 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
   const resultGrid = $("resultGrid");
   const toast = $("toast");
   const appAnnouncer = $("appAnnouncer");
-
-  // Issue #66 / CP59 target-only passive diagnostics. The recorder keeps the
-  // product's UI08 guards and action path unchanged. During the target input it
-  // reads only event fields, app state, and VisualViewport values; computed
-  // style and geometry are sampled only when the operator explicitly exports.
-  const CP59_DIAGNOSTIC_SCHEMA_VERSION = 1;
-  const CP59_DIAGNOSTIC_MAX_EVENTS = 800;
-  const cp59DiagnosticPageStartedAt = performance.now();
-  const cp59DiagnosticRun = CP59_DIAGNOSTIC_ENABLED ? {
-    schemaVersion: CP59_DIAGNOSTIC_SCHEMA_VERSION,
-    appVersion: APP_VERSION,
-    mode: "passive",
-    runId: `cp59-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    startedAtEpoch: Date.now(),
-    userAgent: navigator.userAgent,
-    screen: {
-      width: screen.width,
-      height: screen.height,
-      availWidth: screen.availWidth,
-      availHeight: screen.availHeight,
-      pixelRatio: devicePixelRatio
-    },
-    eventSequence: 0,
-    actionCount: 0,
-    events: [],
-    finalSnapshot: null
-  } : null;
-
-  function cp59DiagnosticViewportSnapshot() {
-    const visual = window.visualViewport;
-    return {
-      inner: [roundViewportMeasurement(innerWidth), roundViewportMeasurement(innerHeight)],
-      visual: visual ? {
-        size: [roundViewportMeasurement(visual.width), roundViewportMeasurement(visual.height)],
-        offset: [roundViewportMeasurement(visual.offsetLeft), roundViewportMeasurement(visual.offsetTop)],
-        page: [roundViewportMeasurement(visual.pageLeft), roundViewportMeasurement(visual.pageTop)],
-        scale: roundViewportMeasurement(visual.scale)
-      } : null,
-      windowScroll: [roundViewportMeasurement(scrollX), roundViewportMeasurement(scrollY)]
-    };
-  }
-
-  function cp59DiagnosticElement(target) {
-    if (!(target instanceof Element)) return null;
-    return {
-      tag: target.tagName.toLowerCase(),
-      id: target.id || null,
-      classes: target.className && typeof target.className === "string"
-        ? target.className.trim() || null
-        : null,
-      insidePlayStage: Boolean(target.closest("#slotView .stage")),
-      closestControl: target.closest("button, [role='button']")?.id || null
-    };
-  }
-
-  function cp59DiagnosticPath(event) {
-    return event.composedPath()
-      .filter(node => node instanceof Element)
-      .slice(0, 7)
-      .map(cp59DiagnosticElement);
-  }
-
-  function cp59DiagnosticTouch(event) {
-    const touch = event.changedTouches?.[0] || event.touches?.[0];
-    return touch ? {
-      identifier: touch.identifier,
-      client: [roundViewportMeasurement(touch.clientX), roundViewportMeasurement(touch.clientY)],
-      page: [roundViewportMeasurement(touch.pageX), roundViewportMeasurement(touch.pageY)],
-      touchCount: event.touches?.length ?? null,
-      changedTouchCount: event.changedTouches?.length ?? null
-    } : null;
-  }
-
-  function recordCp59Diagnostic(name, detail = null) {
-    if (!cp59DiagnosticRun) return;
-    cp59DiagnosticRun.events.push({
-      sequence: ++cp59DiagnosticRun.eventSequence,
-      t: roundViewportMeasurement(performance.now() - cp59DiagnosticPageStartedAt),
-      name,
-      screen: state.screen,
-      playPhase: state.playPhase,
-      viewport: cp59DiagnosticViewportSnapshot(),
-      detail
-    });
-    if (cp59DiagnosticRun.events.length > CP59_DIAGNOSTIC_MAX_EVENTS) {
-      cp59DiagnosticRun.events.splice(0,
-        cp59DiagnosticRun.events.length - CP59_DIAGNOSTIC_MAX_EVENTS);
-    }
-  }
-
-  function recordCp59InputEvent(event, detail = null) {
-    const eventTimeStamp = roundViewportMeasurement(event.timeStamp);
-    const handlerTimeStamp = roundViewportMeasurement(performance.now());
-    const rawLag = Number.isFinite(Number(event.timeStamp))
-      ? performance.now() - Number(event.timeStamp)
-      : null;
-    recordCp59Diagnostic(`input-${event.type}`, {
-      eventTimeStamp,
-      handlerTimeStamp,
-      handlerLagMs: rawLag !== null && Math.abs(rawLag) < 60_000
-        ? roundViewportMeasurement(Math.max(0, rawLag))
-        : null,
-      cancelable: event.cancelable,
-      defaultPrevented: event.defaultPrevented,
-      isTrusted: event.isTrusted,
-      detail: "detail" in event ? event.detail : null,
-      pointerType: "pointerType" in event ? event.pointerType || null : null,
-      pointerId: "pointerId" in event ? event.pointerId : null,
-      client: "clientX" in event
-        ? [roundViewportMeasurement(event.clientX), roundViewportMeasurement(event.clientY)]
-        : null,
-      touch: cp59DiagnosticTouch(event),
-      target: cp59DiagnosticElement(event.target),
-      path: cp59DiagnosticPath(event),
-      diagnostic: detail
-    });
-  }
-
-  function cp59DiagnosticFinalSnapshot() {
-    const visual = window.visualViewport;
-    const readTarget = element => {
-      if (!(element instanceof Element)) return null;
-      const rect = element.getBoundingClientRect();
-      return {
-        target: cp59DiagnosticElement(element),
-        touchAction: getComputedStyle(element).touchAction,
-        rect: {
-          left: roundViewportMeasurement(rect.left),
-          top: roundViewportMeasurement(rect.top),
-          right: roundViewportMeasurement(rect.right),
-          bottom: roundViewportMeasurement(rect.bottom),
-          width: roundViewportMeasurement(rect.width),
-          height: roundViewportMeasurement(rect.height)
-        }
-      };
-    };
-    return {
-      capturedAtEpoch: Date.now(),
-      fullscreen: isFullscreen(),
-      documentHidden: document.hidden,
-      appScreen: state.screen,
-      playPhase: state.playPhase,
-      layout: [document.documentElement.clientWidth, document.documentElement.clientHeight],
-      viewport: cp59DiagnosticViewportSnapshot(),
-      visualScale: roundViewportMeasurement(visual?.scale ?? 1),
-      actionCount: cp59DiagnosticRun?.actionCount ?? 0,
-      ui08Guard: {
-        intervalMs: DOUBLE_TAP_GUARD_MS,
-        distancePx: DOUBLE_TAP_GUARD_DISTANCE_PX,
-        stage: readTarget(slotView.querySelector(".stage")),
-        mainButtonSlot: readTarget(mainButtonSlot),
-        mainButton: readTarget(mainButton)
-      }
-    };
-  }
-
-  async function copyCp59Diagnostics() {
-    if (!cp59DiagnosticRun) return false;
-    cp59DiagnosticRun.finalSnapshot = cp59DiagnosticFinalSnapshot();
-    recordCp59Diagnostic("diagnostic-export-requested", {
-      finalSnapshotCaptured: true,
-      eventCount: cp59DiagnosticRun.eventSequence,
-      actionCount: cp59DiagnosticRun.actionCount
-    });
-    const text = JSON.stringify(cp59DiagnosticRun, null, 2);
-    try {
-      await navigator.clipboard.writeText(text);
-    } catch (_error) {
-      const textarea = document.createElement("textarea");
-      textarea.value = text;
-      textarea.setAttribute("readonly", "");
-      textarea.style.position = "fixed";
-      textarea.style.opacity = "0";
-      document.body.appendChild(textarea);
-      textarea.select();
-      const copied = document.execCommand("copy");
-      textarea.remove();
-      if (!copied) return false;
-    }
-    showToast("CP59診断ログをコピーしました", { duration: 2600 });
-    return true;
-  }
-
-  function installCp59DiagnosticObservers() {
-    if (!cp59DiagnosticRun) return;
-    ["pointerdown", "pointerup", "touchstart", "touchend", "touchcancel", "click", "dblclick"]
-      .forEach(type => document.addEventListener(type, recordCp59InputEvent, {
-        capture: true,
-        passive: true
-      }));
-    window.visualViewport?.addEventListener("resize", () => {
-      recordCp59Diagnostic("visual-viewport-resize");
-    }, { passive: true });
-    window.visualViewport?.addEventListener("scroll", () => {
-      recordCp59Diagnostic("visual-viewport-scroll");
-    }, { passive: true });
-    window.addEventListener("orientationchange", () => {
-      recordCp59Diagnostic("orientation-change", {
-        screenOrientation: screen.orientation?.type || null,
-        angle: screen.orientation?.angle ?? window.orientation ?? null
-      });
-    }, { passive: true });
-    document.addEventListener("fullscreenchange", () => {
-      recordCp59Diagnostic("fullscreen-change", { fullscreen: isFullscreen() });
-    });
-    document.addEventListener("webkitfullscreenchange", () => {
-      recordCp59Diagnostic("webkit-fullscreen-change", { fullscreen: isFullscreen() });
-    });
-    document.addEventListener("visibilitychange", () => {
-      recordCp59Diagnostic("visibility-change", { hidden: document.hidden });
-    });
-  }
-
   let pendingImageEditorAnchor = null;
   const newlyAddedParticipantIds = new Set();
   const newlyAddedNumberIds = new Set();
@@ -19078,28 +18863,12 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
   });
   beginBtn.addEventListener("click", enterSlot);
 
-  mainButton.addEventListener("click", event => {
-    const phaseBefore = state.playPhase;
+  mainButton.addEventListener("click", () => {
     if (resultInputLocked()) return;
     if (state.playPhase === PlayPhase.COMPLETE) return;
     ensureAudio();
     if (state.playPhase === PlayPhase.SPINNING) stopSpin();
     else if (state.playPhase === PlayPhase.READY || state.playPhase === PlayPhase.RESULT) startSpin();
-    if (cp59DiagnosticRun && state.playPhase !== phaseBefore) {
-      cp59DiagnosticRun.actionCount += 1;
-      recordCp59Diagnostic("main-button-action", {
-        actionNumber: cp59DiagnosticRun.actionCount,
-        action: phaseBefore === PlayPhase.SPINNING ? "stop" : "start",
-        phaseBefore,
-        phaseAfter: state.playPhase,
-        click: {
-          eventTimeStamp: roundViewportMeasurement(event.timeStamp),
-          isTrusted: event.isTrusted,
-          detail: event.detail,
-          defaultPrevented: event.defaultPrevented
-        }
-      });
-    }
   });
 
   function activateOneTouch() {
@@ -19654,26 +19423,10 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
     let tapCandidate = null;
 
     const blockMultiTouch = event => {
-      const shouldBlock = event.touches?.length > 1;
-      const defaultPreventedBefore = event.defaultPrevented;
-      if (shouldBlock && event.cancelable) event.preventDefault();
-      if (shouldBlock) recordCp59Diagnostic("ui08-multi-touch-guard", {
-        eventType: event.type,
-        cancelable: event.cancelable,
-        defaultPreventedBefore,
-        defaultPreventedAfter: event.defaultPrevented,
-        touchCount: event.touches?.length ?? null
-      });
+      if (event.touches?.length > 1 && event.cancelable) event.preventDefault();
     };
     const blockGestureEvent = event => {
-      const defaultPreventedBefore = event.defaultPrevented;
       if (event.cancelable) event.preventDefault();
-      recordCp59Diagnostic("ui08-gesture-guard", {
-        eventType: event.type,
-        cancelable: event.cancelable,
-        defaultPreventedBefore,
-        defaultPreventedAfter: event.defaultPrevented
-      });
     };
     const isNativeTextGestureTarget = target => Boolean(
       target?.closest?.("input, textarea, select, [contenteditable]")
@@ -19685,19 +19438,7 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
       if (!isSingleTouchBoundary) return;
       const target = event.target instanceof Element ? event.target.closest("#mainButton") : null;
       if (target !== mainButton || !target.closest("#slotView .stage")) return;
-      const defaultPreventedBefore = event.defaultPrevented;
       if (event.cancelable) event.preventDefault();
-      recordCp59Diagnostic("cp59-main-button-touch-guard", {
-        eventType: event.type,
-        eventTimeStamp: roundViewportMeasurement(event.timeStamp),
-        target: cp59DiagnosticElement(target),
-        buttonDisabled: mainButton.disabled,
-        spinStartContentGatePending,
-        cancelable: event.cancelable,
-        defaultPreventedBefore,
-        defaultPreventedAfter: event.defaultPrevented,
-        touch: cp59DiagnosticTouch(event)
-      });
     };
     const beginTapCandidate = event => {
       if (event.touches?.length !== 1) {
@@ -19717,7 +19458,6 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
       const closeInSpace = previous && distance <= DOUBLE_TAP_GUARD_DISTANCE_PX;
       const nativeTextGesture = isNativeTextGestureTarget(target);
       const shouldBlockAtStart = Boolean(closeInTime && closeInSpace && !nativeTextGesture);
-      const defaultPreventedBefore = event.defaultPrevented;
       if (shouldBlockAtStart && event.cancelable) event.preventDefault();
       tapCandidate = {
         x: touch.clientX,
@@ -19728,22 +19468,6 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
         blockedAtTouchStart: shouldBlockAtStart && event.defaultPrevented,
         moved: false
       };
-      recordCp59Diagnostic("ui08-touchstart-guard", {
-        eventTimeStamp: roundViewportMeasurement(event.timeStamp),
-        target: cp59DiagnosticElement(target),
-        previousTap: previous ? {
-          ageMs: roundViewportMeasurement(interval),
-          distancePx: roundViewportMeasurement(distance)
-        } : null,
-        closeInTime: Boolean(closeInTime),
-        closeInSpace: Boolean(closeInSpace),
-        nativeTextGesture,
-        shouldBlock: shouldBlockAtStart,
-        cancelable: event.cancelable,
-        defaultPreventedBefore,
-        defaultPreventedAfter: event.defaultPrevented,
-        touch: cp59DiagnosticTouch(event)
-      });
     };
     const trackTapMovement = event => {
       if (event.touches?.length !== 1) {
@@ -19762,20 +19486,6 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
       const current = tapCandidate;
       tapCandidate = null;
       if (!current || current.moved || current.nativeTextGesture) {
-        recordCp59Diagnostic("ui08-touchend-guard", {
-          eventTimeStamp: roundViewportMeasurement(event.timeStamp),
-          target: cp59DiagnosticElement(event.target),
-          candidate: current ? {
-            moved: current.moved,
-            nativeTextGesture: current.nativeTextGesture,
-            blockedAtTouchStart: current.blockedAtTouchStart
-          } : null,
-          shouldBlock: false,
-          cancelable: event.cancelable,
-          defaultPreventedBefore: event.defaultPrevented,
-          defaultPreventedAfter: event.defaultPrevented,
-          touch: cp59DiagnosticTouch(event)
-        });
         lastTap = null;
         return;
       }
@@ -19784,59 +19494,19 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
       const closeInTime = previous && now - previous.at <= DOUBLE_TAP_GUARD_MS;
       const closeInSpace = previous
         && Math.hypot(current.x - previous.x, current.y - previous.y) <= DOUBLE_TAP_GUARD_DISTANCE_PX;
-      const defaultPreventedBefore = event.defaultPrevented;
       if (closeInTime && closeInSpace) {
         if (event.cancelable) event.preventDefault();
-        recordCp59Diagnostic("ui08-touchend-guard", {
-          eventTimeStamp: roundViewportMeasurement(event.timeStamp),
-          target: cp59DiagnosticElement(event.target),
-          previousTap: {
-            ageMs: roundViewportMeasurement(now - previous.at),
-            distancePx: roundViewportMeasurement(
-              Math.hypot(current.x - previous.x, current.y - previous.y))
-          },
-          blockedAtTouchStart: current.blockedAtTouchStart,
-          shouldBlock: true,
-          cancelable: event.cancelable,
-          defaultPreventedBefore,
-          defaultPreventedAfter: event.defaultPrevented,
-          touch: cp59DiagnosticTouch(event)
-        });
         lastTap = null;
         return;
       }
-      recordCp59Diagnostic("ui08-touchend-guard", {
-        eventTimeStamp: roundViewportMeasurement(event.timeStamp),
-        target: cp59DiagnosticElement(event.target),
-        previousTap: previous ? {
-          ageMs: roundViewportMeasurement(now - previous.at),
-          distancePx: roundViewportMeasurement(
-            Math.hypot(current.x - previous.x, current.y - previous.y))
-        } : null,
-        blockedAtTouchStart: current.blockedAtTouchStart,
-        shouldBlock: false,
-        cancelable: event.cancelable,
-        defaultPreventedBefore,
-        defaultPreventedAfter: event.defaultPrevented,
-        touch: cp59DiagnosticTouch(event)
-      });
       lastTap = { at: now, x: current.x, y: current.y };
     };
     const cancelTapCandidate = () => {
-      recordCp59Diagnostic("ui08-tap-candidate-cancelled");
       tapCandidate = null;
       lastTap = null;
     };
     const blockDoubleTapZoom = event => {
-      const defaultPreventedBefore = event.defaultPrevented;
       if (event.cancelable) event.preventDefault();
-      recordCp59Diagnostic("ui08-dblclick-guard", {
-        eventTimeStamp: roundViewportMeasurement(event.timeStamp),
-        target: cp59DiagnosticElement(event.target),
-        cancelable: event.cancelable,
-        defaultPreventedBefore,
-        defaultPreventedAfter: event.defaultPrevented
-      });
     };
 
     document.addEventListener("touchstart", blockMainButtonSingleTouchDefault, { passive: false, capture: true });
@@ -20075,13 +19745,6 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
   document.documentElement.classList.remove("transient-viewport-boot-painting");
   scheduleRootOriginResynchronization("boot");
   installPageZoomGuard();
-  if (cp59DiagnosticRun) {
-    recordCp59Diagnostic("diagnostic-run-started", {
-      mode: cp59DiagnosticRun.mode,
-      query: "cp59-diagnostic=passive"
-    });
-    installCp59DiagnosticObservers();
-  }
   installRootPanGuard();
   installScrollEdgeSurfaces();
   reducedMotionQuery?.addEventListener?.("change", syncReducedEffectsClass);
@@ -20089,39 +19752,6 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
   syncReducedEffectsClass();
   if (titleVersion) {
     titleVersion.textContent = APP_VERSION ? `v${APP_VERSION}` : "";
-  }
-  if (cp59DiagnosticRun) {
-    titleVersion.textContent += "・CP59 passive";
-    document.documentElement.dataset.cp59Diagnostic = "passive";
-    const diagnosticExportButton = document.createElement("button");
-    diagnosticExportButton.type = "button";
-    diagnosticExportButton.id = "cp59DiagnosticExport";
-    diagnosticExportButton.textContent = "CP59ログ";
-    diagnosticExportButton.setAttribute("aria-label", "CP59診断ログをコピー");
-    diagnosticExportButton.style.cssText = [
-      "position:fixed",
-      "z-index:2147483000",
-      "left:max(8px, env(safe-area-inset-left))",
-      "bottom:max(8px, env(safe-area-inset-bottom))",
-      "min-width:88px",
-      "min-height:44px",
-      "border:1px solid rgba(255,255,255,.72)",
-      "border-radius:12px",
-      "background:#17324d",
-      "color:#fff",
-      "font:700 13px/1.2 system-ui,sans-serif",
-      "padding:8px 12px",
-      "box-shadow:0 3px 10px rgba(0,0,0,.28)"
-    ].join(";");
-    diagnosticExportButton.addEventListener("click", () => {
-      void copyCp59Diagnostics().then(copied => {
-        if (!copied) showToast("CP59診断ログをコピーできませんでした", {
-          type: "error",
-          duration: 3200
-        });
-      });
-    });
-    document.body.appendChild(diagnosticExportButton);
   }
   discardLegacyViewportDiagnostics();
   updateViewportCssVariables();

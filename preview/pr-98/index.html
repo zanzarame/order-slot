@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 
 <!-- 順番スロット -->
-<html class="transient-viewport-boot-painting" data-app-version="8.0.129" lang="ja">
+<html class="transient-viewport-boot-painting" data-app-version="8.0.130" lang="ja">
 <head>
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" name="viewport"/>
@@ -8789,7 +8789,7 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
   const APP_VERSION = document.documentElement.dataset.appVersion || "";
   const TOP_EDGE_OBSERVATION_CASE_QUERY = (new URLSearchParams(location.search)
     .get("t67-rotation-timing") || "").toUpperCase();
-  const TOP_EDGE_OBSERVATION_CASE = ["I", "W"].includes(TOP_EDGE_OBSERVATION_CASE_QUERY)
+  const TOP_EDGE_OBSERVATION_CASE = ["I"].includes(TOP_EDGE_OBSERVATION_CASE_QUERY)
     ? TOP_EDGE_OBSERVATION_CASE_QUERY
     : null;
   const MAX_PARTICIPANTS = 40;
@@ -11172,20 +11172,17 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
   let innerRecoveryQuietTimer = null;
   let orientationViewportTransition = null;
 
-  // Issue #67 v8.0.128 follow-up. I and W record the same product event,
-  // scheduler, A1+C, and qualified-retry lifecycle while changing only whether
-  // the top-edge action follows ordinary rotation immediately or after 5s.
-  // Neither case adds a probe or changes product geometry and recovery timing.
+  // Issue #67 v8.0.129 follow-up. I records the same product event, scheduler,
+  // A1+C, and qualified-retry lifecycle while a diagnostic-only save gate keeps
+  // the log open through the post-action observation window. It adds no probe
+  // and changes neither product geometry nor recovery timing.
   const TOP_EDGE_OBSERVATION_SCHEMA_VERSION = 3;
+  const TOP_EDGE_OBSERVATION_FINAL_SAVE_DELAY_MS = 15000;
+  const TOP_EDGE_OBSERVATION_BROWSER_UI_SAVE_DELAY_MS = 6000;
   const TOP_EDGE_OBSERVATION_DEFINITIONS = {
     I: {
       observationMode: "rotation-immediate-passive",
       diagnosisFocus: "top-edge-during-post-fullscreen-ordinary-rotation-recovery",
-      scheduledReevaluation: false
-    },
-    W: {
-      observationMode: "rotation-wait-control-passive",
-      diagnosisFocus: "top-edge-after-post-fullscreen-ordinary-rotation-settle",
       scheduledReevaluation: false
     }
   };
@@ -11195,15 +11192,7 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
       { id: "I1", button: "②FS前横を記録", instruction: "縦から横へ回転し、5秒待機した時点", action: "rotate-portrait-to-landscape", orientation: "landscape", fullscreen: false, topEdge: false },
       { id: "I2", button: "③FS横を記録", instruction: "横向きのままFullscreenへ入り、5秒待機した時点", action: "enter-fullscreen-landscape", orientation: "landscape", fullscreen: true, topEdge: false },
       { id: "I3", button: "④解除後横を記録", instruction: "横向きのままアプリ内ボタンでFullscreenを解除し、5秒待機した時点。記録後に縦へ回転し、縦表示が見えたら待機せずtop-edgeを1回操作する", action: "exit-fullscreen-landscape-before-immediate-rotation-top-edge", orientation: "landscape", fullscreen: false, topEdge: false, arm: true },
-      { id: "I4", button: "⑤直後tap後・保存", instruction: "縦回転後に待機せずtop-edgeを1回操作し、その後5秒待機した時点", action: "portrait-top-edge-during-rotation-recovery", orientation: "portrait", fullscreen: false, topEdge: true }
-    ],
-    W: [
-      { id: "W0", button: "①初期縦を記録", instruction: "PLAY到達後、初期縦向きで5秒待機した時点", action: "initial-portrait-wait", orientation: "portrait", fullscreen: false, topEdge: false },
-      { id: "W1", button: "②FS前横を記録", instruction: "縦から横へ回転し、5秒待機した時点", action: "rotate-portrait-to-landscape", orientation: "landscape", fullscreen: false, topEdge: false },
-      { id: "W2", button: "③FS横を記録", instruction: "横向きのままFullscreenへ入り、5秒待機した時点", action: "enter-fullscreen-landscape", orientation: "landscape", fullscreen: true, topEdge: false },
-      { id: "W3", button: "④解除後横を記録", instruction: "横向きのままアプリ内ボタンでFullscreenを解除し、5秒待機した時点", action: "exit-fullscreen-landscape", orientation: "landscape", fullscreen: false, topEdge: false },
-      { id: "W4", button: "⑤通常縦を記録", instruction: "Windowedで縦へ回転し、5秒待機した時点。記録後2秒以内にtop-edgeを1回操作する", action: "ordinary-rotate-landscape-to-portrait-wait", orientation: "portrait", fullscreen: false, topEdge: false, arm: true },
-      { id: "W5", button: "⑥待機tap後・保存", instruction: "縦回転から5秒以上待った後にtop-edgeを1回操作し、その後5秒待機した時点", action: "portrait-top-edge-after-rotation-settle", orientation: "portrait", fullscreen: false, topEdge: true }
+      { id: "I4", button: "⑤ログを保存", instruction: "縦回転後に待機せずtop-edgeを1回操作し、保存ボタンが有効になるまで画面へ触れずに待機した時点", action: "portrait-top-edge-during-rotation-recovery", orientation: "portrait", fullscreen: false, topEdge: true }
     ]
   };
   const topEdgeObservationPageStartedAt = performance.now();
@@ -11236,6 +11225,9 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
     : "inactive";
   let topEdgeObservationMarkerIndex = 0;
   let topEdgeObservationArmedAt = null;
+  let topEdgeObservationControl = null;
+  let topEdgeObservationFinalUnlockTimer = null;
+  let topEdgeObservationFinalUnlockAt = null;
 
   function topEdgeObservationRound(value) {
     const number = Number(value);
@@ -11399,6 +11391,48 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
       snapshot: topEdgeObservationSnapshot({ measureShell }),
       detail
     });
+    if (name === "post-fullscreen-recovery-scheduled"
+      && detail?.triggerKind === "browser-ui") {
+      scheduleTopEdgeObservationFinalUnlock(
+        "logger-distinguishable-browser-ui",
+        TOP_EDGE_OBSERVATION_BROWSER_UI_SAVE_DELAY_MS
+      );
+    }
+  }
+
+  function scheduleTopEdgeObservationFinalUnlock(reason, delayMs) {
+    if (!topEdgeObservationRun
+      || TOP_EDGE_OBSERVATION_CASE !== "I"
+      || topEdgeObservationMarkerIndex !== 4
+      || !topEdgeObservationControl) return;
+    const requestedAt = performance.now();
+    const requestedUnlockAt = requestedAt + delayMs;
+    if (topEdgeObservationFinalUnlockAt !== null
+      && topEdgeObservationFinalUnlockAt >= requestedUnlockAt) return;
+    clearTimeout(topEdgeObservationFinalUnlockTimer);
+    topEdgeObservationFinalUnlockAt = requestedUnlockAt;
+    topEdgeObservationControlState = "waiting-I4-save-gate";
+    topEdgeObservationControl.disabled = true;
+    topEdgeObservationControl.textContent = "⑤操作後の表示を記録中";
+    recordTopEdgeObservation("diagnostic-final-save-gate-scheduled", {
+      reason,
+      minimumDelayMs: delayMs
+    });
+    topEdgeObservationFinalUnlockTimer = setTimeout(() => {
+      topEdgeObservationFinalUnlockTimer = null;
+      topEdgeObservationControlState = "awaiting-I4";
+      recordTopEdgeObservation("diagnostic-final-save-gate-unlocked", {
+        reason,
+        minimumDelayMs: delayMs
+      }, { measureShell: true });
+      topEdgeObservationControl.disabled = false;
+      topEdgeObservationControl.textContent = topEdgeObservationMarkers[4].button;
+      topEdgeObservationControl.setAttribute(
+        "aria-label",
+        `T67-RT-I ${topEdgeObservationMarkers[4].instruction}`
+      );
+      showToast("表示記録が完了しました。ログを保存できます", { duration: 2600 });
+    }, Math.max(0, requestedUnlockAt - performance.now()));
   }
 
   function startTopEdgeObservationWindow() {
@@ -11454,6 +11488,7 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
     document.addEventListener("webkitfullscreenchange", recordBrowserEvent, { passive: true });
 
     const button = document.createElement("button");
+    topEdgeObservationControl = button;
     button.type = "button";
     button.id = "topEdgeObservationDiagnosticControl";
     button.textContent = topEdgeObservationMarkers[0].button;
@@ -11495,7 +11530,15 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
         topEdgeObservationControlState = `awaiting-${nextMarker.id}`;
         button.textContent = nextMarker.button;
         button.setAttribute("aria-label", `T67-RT-${TOP_EDGE_OBSERVATION_CASE} ${nextMarker.instruction}`);
-        showToast(`${marker.id}を記録しました`, { duration: 1400 });
+        if (marker.id === "I3") {
+          scheduleTopEdgeObservationFinalUnlock(
+            "operator-marker-I3",
+            TOP_EDGE_OBSERVATION_FINAL_SAVE_DELAY_MS
+          );
+          showToast("縦表示が見えたら待機せず最上部を1回操作し、そのまま保存可能になるまで待ってください", { duration: 5200 });
+        } else {
+          showToast(`${marker.id}を記録しました`, { duration: 1400 });
+        }
         return;
       }
       topEdgeObservationControlState = "exporting";

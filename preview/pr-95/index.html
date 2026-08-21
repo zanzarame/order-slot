@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 
 <!-- 順番スロット -->
-<html class="transient-viewport-boot-painting" data-app-version="8.0.121" lang="ja">
+<html class="transient-viewport-boot-painting" data-app-version="8.0.122" lang="ja">
 <head>
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" name="viewport"/>
@@ -11235,6 +11235,13 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
   function topEdgeDiagnosticMeasuredSnapshot() {
     if (TOP_EDGE_DIAGNOSTIC_MODE !== "measured") return null;
     const rootStyle = getComputedStyle(document.documentElement);
+    const slotViewStyle = getComputedStyle(slotView);
+    const playTopbarStyle = getComputedStyle(playTopbar);
+    const playLayoutStyle = getComputedStyle(playLayout);
+    const historyPanel = playLayout.querySelector(".history-panel");
+    const historyPanelStyle = getComputedStyle(historyPanel);
+    const historyListWrapStyle = getComputedStyle(historyListWrap);
+    const historyListStyle = getComputedStyle(historyList);
     return {
       css: {
         appWidth: rootStyle.getPropertyValue("--app-width").trim() || null,
@@ -11242,17 +11249,56 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
         appCoordinateHeight: rootStyle.getPropertyValue("--app-coordinate-height").trim() || null,
         visualOffsetX: rootStyle.getPropertyValue("--visual-viewport-offset-x").trim() || null,
         visualOffsetY: rootStyle.getPropertyValue("--visual-viewport-offset-y").trim() || null,
-        browserUiBottomOcclusion: rootStyle.getPropertyValue("--browser-ui-bottom-occlusion").trim() || null
+        browserUiBottomOcclusion: rootStyle.getPropertyValue("--browser-ui-bottom-occlusion").trim() || null,
+        effectiveSafeTop: rootStyle.getPropertyValue("--effective-safe-top").trim() || null,
+        effectiveSafeBottom: rootStyle.getPropertyValue("--effective-safe-bottom").trim() || null,
+        playSafeBottom: rootStyle.getPropertyValue("--play-safe-bottom").trim() || null
+      },
+      computed: {
+        slotView: {
+          height: slotViewStyle.height,
+          minHeight: slotViewStyle.minHeight,
+          paddingTop: slotViewStyle.paddingTop,
+          paddingBottom: slotViewStyle.paddingBottom
+        },
+        playTopbar: {
+          height: playTopbarStyle.height,
+          minHeight: playTopbarStyle.minHeight,
+          paddingTop: playTopbarStyle.paddingTop,
+          paddingBottom: playTopbarStyle.paddingBottom
+        },
+        playLayout: {
+          height: playLayoutStyle.height,
+          paddingTop: playLayoutStyle.paddingTop,
+          paddingBottom: playLayoutStyle.paddingBottom,
+          gridTemplateColumns: playLayoutStyle.gridTemplateColumns,
+          gridTemplateRows: playLayoutStyle.gridTemplateRows
+        },
+        historyPanel: {
+          height: historyPanelStyle.height,
+          paddingTop: historyPanelStyle.paddingTop,
+          paddingBottom: historyPanelStyle.paddingBottom
+        },
+        historyListWrap: {
+          height: historyListWrapStyle.height
+        },
+        historyList: {
+          height: historyListStyle.height
+        }
       },
       rects: {
         root: topEdgeDiagnosticRect(document.documentElement),
         body: topEdgeDiagnosticRect(document.body),
         appRoot: topEdgeDiagnosticRect(appRoot),
         slotView: topEdgeDiagnosticRect(slotView),
+        playTopbar: topEdgeDiagnosticRect(playTopbar),
         playLayout: topEdgeDiagnosticRect(playLayout),
         stageVisual: topEdgeDiagnosticRect(stageVisual),
         mainButtonSlot: topEdgeDiagnosticRect(mainButtonSlot),
-        mainButton: topEdgeDiagnosticRect(mainButton)
+        mainButton: topEdgeDiagnosticRect(mainButton),
+        historyPanel: topEdgeDiagnosticRect(historyPanel),
+        historyListWrap: topEdgeDiagnosticRect(historyListWrap),
+        historyList: topEdgeDiagnosticRect(historyList)
       },
       classes: {
         root: document.documentElement.className,

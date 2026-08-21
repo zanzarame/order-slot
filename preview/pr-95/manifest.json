@@ -4,19 +4,19 @@
   "source": {
     "repository": "zanzarame/order-slot-dev",
     "pullRequest": 95,
-    "commit": "b765e40044727d12bd47d0d4c8941a566d0fda1f",
-    "path": "app/順番スロット_v8.0.120.html",
-    "version": "8.0.120",
-    "gitBlob": "0f98e30195870e1ffce6ace4a76d842a1d4d784b",
-    "sha256": "95E128DFD48260C2FDA55937DAE89623A6E9ABD024D51D950C3CE235BE728768",
-    "bytes": 710754
+    "commit": "36e17342a19dac13eb56c9c270372ab133778b79",
+    "path": "app/順番スロット_v8.0.121.html",
+    "version": "8.0.121",
+    "gitBlob": "6e1bcda3bf8fdfc7bc7a1f8635e67df6b573db7a",
+    "sha256": "9A6F23A0FCC812F7A56794FCB5F188EB6E56BE6B377A269E92C0D9EFEC6DA28E",
+    "bytes": 725861
   },
   "preview": {
     "repository": "zanzarame/order-slot",
     "path": "preview/pr-95/index.html",
     "url": "https://zanzarame.github.io/order-slot/preview/pr-95/",
-    "sha256": "95E128DFD48260C2FDA55937DAE89623A6E9ABD024D51D950C3CE235BE728768",
-    "bytes": 710754
+    "sha256": "9A6F23A0FCC812F7A56794FCB5F188EB6E56BE6B377A269E92C0D9EFEC6DA28E",
+    "bytes": 725861
   },
   "productionRootBefore": {
     "path": "index.html",

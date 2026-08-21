@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 
 <!-- 順番スロット -->
-<html class="transient-viewport-boot-painting" data-app-version="8.0.117" lang="ja">
+<html class="transient-viewport-boot-painting" data-app-version="8.0.118" lang="ja">
 <head>
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" name="viewport"/>
@@ -19678,6 +19678,24 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
     const isNativeTextGestureTarget = target => Boolean(
       target?.closest?.("input, textarea, select, [contenteditable]")
     );
+    const blockMainButtonTouchPointerDefault = event => {
+      if (event.pointerType !== "touch") return;
+      const target = event.target instanceof Element ? event.target.closest("#mainButton") : null;
+      if (target !== mainButton || !target.closest("#slotView .stage")) return;
+      const defaultPreventedBefore = event.defaultPrevented;
+      if (event.cancelable) event.preventDefault();
+      recordCp59Diagnostic("cp59-main-button-pointerdown-guard", {
+        eventTimeStamp: roundViewportMeasurement(event.timeStamp),
+        pointerId: event.pointerId,
+        isPrimary: event.isPrimary,
+        target: cp59DiagnosticElement(target),
+        buttonDisabled: mainButton.disabled,
+        spinStartContentGatePending,
+        cancelable: event.cancelable,
+        defaultPreventedBefore,
+        defaultPreventedAfter: event.defaultPrevented
+      });
+    };
     const beginTapCandidate = event => {
       if (event.touches?.length !== 1) {
         tapCandidate = null;
@@ -19818,6 +19836,7 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
       });
     };
 
+    document.addEventListener("pointerdown", blockMainButtonTouchPointerDefault, { passive: false, capture: true });
     document.addEventListener("touchstart", beginTapCandidate, { passive: false, capture: true });
     document.addEventListener("touchmove", trackTapMovement, { passive: true, capture: true });
     document.addEventListener("touchend", finishTapCandidate, { passive: false, capture: true });

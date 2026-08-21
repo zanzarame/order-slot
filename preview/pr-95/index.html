@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 
 <!-- 順番スロット -->
-<html class="transient-viewport-boot-painting" data-app-version="8.0.120" lang="ja">
+<html class="transient-viewport-boot-painting" data-app-version="8.0.121" lang="ja">
 <head>
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" name="viewport"/>
@@ -8787,6 +8787,12 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
   // Configuration
   // ---------------------------------------------------------------------------
   const APP_VERSION = document.documentElement.dataset.appVersion || "";
+  const TOP_EDGE_DIAGNOSTIC_MODE_QUERY = new URLSearchParams(location.search)
+    .get("top-edge-diagnostic");
+  const TOP_EDGE_DIAGNOSTIC_MODE = ["passive", "measured"]
+    .includes(TOP_EDGE_DIAGNOSTIC_MODE_QUERY)
+    ? TOP_EDGE_DIAGNOSTIC_MODE_QUERY
+    : null;
   const MAX_PARTICIPANTS = 40;
   const NUMBER_RANGE_MIN = 2;
   const NUMBER_RANGE_MAX = 40;
@@ -11137,6 +11143,320 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
   let viewportRecoveryAttemptedForLifecycle = false;
   let viewportRecoveryPostRestoreObservation = null;
   let viewportRecoveryDisplayOverride = null;
+
+  // Issue #67 / T67-L1 target-only diagnostics. Passive mode records the
+  // browser-provided viewport, scroll offsets/ranges, and resolver state.
+  // Measured mode adds synchronous DOM rectangles and computed app-shell CSS
+  // only so a separate run can expose an observer effect. Neither mode changes
+  // product recovery eligibility or writes viewport/scroll state.
+  const TOP_EDGE_DIAGNOSTIC_SCHEMA_VERSION = 1;
+  const TOP_EDGE_DIAGNOSTIC_MAX_EVENTS = 1000;
+  const topEdgeDiagnosticPageStartedAt = performance.now();
+  const topEdgeDiagnosticRun = TOP_EDGE_DIAGNOSTIC_MODE ? {
+    kind: "browser-top-edge-after-rotation",
+    schemaVersion: TOP_EDGE_DIAGNOSTIC_SCHEMA_VERSION,
+    appVersion: APP_VERSION,
+    mode: TOP_EDGE_DIAGNOSTIC_MODE,
+    targetCase: "T67-L1",
+    runId: `t67-top-edge-${TOP_EDGE_DIAGNOSTIC_MODE}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    startedAtEpoch: Date.now(),
+    completedAtEpoch: null,
+    userAgent: navigator.userAgent,
+    screenAtStart: {
+      width: screen.width,
+      height: screen.height,
+      availWidth: screen.availWidth,
+      availHeight: screen.availHeight,
+      pixelRatio: devicePixelRatio,
+      orientationType: screen.orientation?.type || null,
+      orientationAngle: screen.orientation?.angle ?? window.orientation ?? null
+    },
+    eventSequence: 0,
+    operatorMarkers: 0,
+    events: [],
+    finalSnapshot: null
+  } : null;
+  let topEdgeDiagnosticControlState = "idle";
+
+  function topEdgeDiagnosticViewportCopy(viewport) {
+    if (!viewport) return null;
+    return {
+      width: roundViewportMeasurement(viewport.width),
+      height: roundViewportMeasurement(viewport.height)
+    };
+  }
+
+  function topEdgeDiagnosticBaselineCopy(record) {
+    if (!record) return null;
+    return {
+      viewport: topEdgeDiagnosticViewportCopy(record.viewport || record),
+      orientation: record.orientation || null,
+      source: record.source || null,
+      sourceWidth: roundViewportMeasurement(record.sourceWidth),
+      sourceHeight: roundViewportMeasurement(record.sourceHeight),
+      updatedAt: roundViewportMeasurement(record.updatedAt),
+      verifiedAt: roundViewportMeasurement(record.verifiedAt)
+    };
+  }
+
+  function topEdgeDiagnosticScrollSurface(element) {
+    if (!(element instanceof Element)) return null;
+    const left = Number(element.scrollLeft) || 0;
+    const top = Number(element.scrollTop) || 0;
+    const width = Number(element.scrollWidth) || 0;
+    const height = Number(element.scrollHeight) || 0;
+    const clientWidth = Number(element.clientWidth) || 0;
+    const clientHeight = Number(element.clientHeight) || 0;
+    return {
+      left: roundViewportMeasurement(left),
+      top: roundViewportMeasurement(top),
+      width: roundViewportMeasurement(width),
+      height: roundViewportMeasurement(height),
+      clientWidth: roundViewportMeasurement(clientWidth),
+      clientHeight: roundViewportMeasurement(clientHeight),
+      rangeX: roundViewportMeasurement(Math.max(0, width - clientWidth)),
+      rangeY: roundViewportMeasurement(Math.max(0, height - clientHeight))
+    };
+  }
+
+  function topEdgeDiagnosticRect(element) {
+    if (!(element instanceof Element)) return null;
+    const rect = element.getBoundingClientRect();
+    return {
+      left: roundViewportMeasurement(rect.left),
+      top: roundViewportMeasurement(rect.top),
+      right: roundViewportMeasurement(rect.right),
+      bottom: roundViewportMeasurement(rect.bottom),
+      width: roundViewportMeasurement(rect.width),
+      height: roundViewportMeasurement(rect.height)
+    };
+  }
+
+  function topEdgeDiagnosticMeasuredSnapshot() {
+    if (TOP_EDGE_DIAGNOSTIC_MODE !== "measured") return null;
+    const rootStyle = getComputedStyle(document.documentElement);
+    return {
+      css: {
+        appWidth: rootStyle.getPropertyValue("--app-width").trim() || null,
+        appHeight: rootStyle.getPropertyValue("--app-height").trim() || null,
+        appCoordinateHeight: rootStyle.getPropertyValue("--app-coordinate-height").trim() || null,
+        visualOffsetX: rootStyle.getPropertyValue("--visual-viewport-offset-x").trim() || null,
+        visualOffsetY: rootStyle.getPropertyValue("--visual-viewport-offset-y").trim() || null,
+        browserUiBottomOcclusion: rootStyle.getPropertyValue("--browser-ui-bottom-occlusion").trim() || null
+      },
+      rects: {
+        root: topEdgeDiagnosticRect(document.documentElement),
+        body: topEdgeDiagnosticRect(document.body),
+        appRoot: topEdgeDiagnosticRect(appRoot),
+        slotView: topEdgeDiagnosticRect(slotView),
+        playLayout: topEdgeDiagnosticRect(playLayout),
+        stageVisual: topEdgeDiagnosticRect(stageVisual),
+        mainButtonSlot: topEdgeDiagnosticRect(mainButtonSlot),
+        mainButton: topEdgeDiagnosticRect(mainButton)
+      },
+      classes: {
+        root: document.documentElement.className,
+        slotView: slotView.className,
+        playLayout: playLayout.className
+      }
+    };
+  }
+
+  function topEdgeDiagnosticSnapshot() {
+    const root = document.documentElement;
+    const body = document.body;
+    const visual = window.visualViewport;
+    const layout = getViewportSize();
+    const visible = getVisibleViewportSize();
+    const scrollingElement = document.scrollingElement;
+    const residual = browserUiViewportResidual;
+    return {
+      capturedAtEpoch: Date.now(),
+      pageT: roundViewportMeasurement(performance.now() - topEdgeDiagnosticPageStartedAt),
+      screen: {
+        width: screen.width,
+        height: screen.height,
+        availWidth: screen.availWidth,
+        availHeight: screen.availHeight,
+        orientationType: screen.orientation?.type || null,
+        orientationAngle: screen.orientation?.angle ?? window.orientation ?? null
+      },
+      viewport: {
+        layout: topEdgeDiagnosticViewportCopy(layout),
+        visible: topEdgeDiagnosticViewportCopy(visible),
+        inner: {
+          width: roundViewportMeasurement(innerWidth),
+          height: roundViewportMeasurement(innerHeight)
+        },
+        visual: visual ? {
+          width: roundViewportMeasurement(visual.width),
+          height: roundViewportMeasurement(visual.height),
+          offsetLeft: roundViewportMeasurement(visual.offsetLeft),
+          offsetTop: roundViewportMeasurement(visual.offsetTop),
+          pageLeft: roundViewportMeasurement(visual.pageLeft),
+          pageTop: roundViewportMeasurement(visual.pageTop),
+          scale: roundViewportMeasurement(visual.scale)
+        } : null,
+        layoutOrientation: getViewportOrientation(layout),
+        visibleOrientation: getViewportOrientation(visible)
+      },
+      scroll: {
+        window: {
+          x: roundViewportMeasurement(scrollX),
+          y: roundViewportMeasurement(scrollY)
+        },
+        scrollingElement: topEdgeDiagnosticScrollSurface(scrollingElement),
+        root: topEdgeDiagnosticScrollSurface(root),
+        body: topEdgeDiagnosticScrollSurface(body),
+        setupView: topEdgeDiagnosticScrollSurface(setupView),
+        slotView: topEdgeDiagnosticScrollSurface(slotView),
+        historyListWrap: topEdgeDiagnosticScrollSurface(historyListWrap),
+        historyList: topEdgeDiagnosticScrollSurface(historyList)
+      },
+      app: {
+        screen: state.screen,
+        playPhase: state.playPhase,
+        fullscreen: isFullscreen(),
+        fullscreenTransition: state.fullscreenTransition,
+        sessionKind: getViewportSessionKind(),
+        displayedViewport: topEdgeDiagnosticViewportCopy(displayedAppViewport),
+        displayedOrientation: displayedViewportOrientation,
+        expected: {
+          portrait: topEdgeDiagnosticBaselineCopy(expectedWindowedViewports.portrait),
+          landscape: topEdgeDiagnosticBaselineCopy(expectedWindowedViewports.landscape)
+        },
+        verified: {
+          portrait: topEdgeDiagnosticBaselineCopy(verifiedWindowedViewports.portrait),
+          landscape: topEdgeDiagnosticBaselineCopy(verifiedWindowedViewports.landscape)
+        },
+        browserUiResidual: residual ? {
+          viewport: topEdgeDiagnosticViewportCopy(residual.viewport),
+          orientation: residual.orientation || null,
+          visibleGap: roundViewportMeasurement(residual.visibleGap),
+          top: roundViewportMeasurement(residual.top),
+          bottom: roundViewportMeasurement(residual.bottom)
+        } : null,
+        browserUiResidualRecoveryActive: Boolean(browserUiResidualRecovery),
+        postFullscreenRotationRecoveryEligible: Boolean(postFullscreenWindowedRotationRecoveryEligibility),
+        postFullscreenRotationRecoveryActive: Boolean(postFullscreenWindowedRotationOverflowScrollRecovery),
+        orientationTransition: orientationViewportTransition ? {
+          from: orientationViewportTransition.from || null,
+          to: orientationViewportTransition.to || null,
+          startedAt: roundViewportMeasurement(orientationViewportTransition.startedAt)
+        } : null,
+        viewportRecoveryPhase,
+        viewportRecoveryDisplayOverride: viewportRecoveryDisplayOverride ? {
+          target: topEdgeDiagnosticViewportCopy(viewportRecoveryDisplayOverride.target),
+          reason: viewportRecoveryDisplayOverride.reason || null
+        } : null
+      },
+      measured: topEdgeDiagnosticMeasuredSnapshot()
+    };
+  }
+
+  function recordTopEdgeDiagnostic(name, detail = null) {
+    if (!topEdgeDiagnosticRun) return;
+    topEdgeDiagnosticRun.events.push({
+      sequence: ++topEdgeDiagnosticRun.eventSequence,
+      t: roundViewportMeasurement(performance.now() - topEdgeDiagnosticPageStartedAt),
+      name,
+      markerState: topEdgeDiagnosticControlState,
+      snapshot: topEdgeDiagnosticSnapshot(),
+      detail
+    });
+    if (topEdgeDiagnosticRun.events.length > TOP_EDGE_DIAGNOSTIC_MAX_EVENTS) {
+      const removed = topEdgeDiagnosticRun.events.length - TOP_EDGE_DIAGNOSTIC_MAX_EVENTS;
+      topEdgeDiagnosticRun.events.splice(0, removed);
+      topEdgeDiagnosticRun.truncatedEventCount =
+        (topEdgeDiagnosticRun.truncatedEventCount || 0) + removed;
+    }
+  }
+
+  function installTopEdgeDiagnosticObservers() {
+    if (!topEdgeDiagnosticRun) return;
+    document.addEventListener("visibilitychange", () => {
+      recordTopEdgeDiagnostic("visibility-change", { hidden: document.hidden });
+    }, { passive: true });
+    document.addEventListener("fullscreenchange", () => {
+      recordTopEdgeDiagnostic("fullscreen-change", { fullscreen: isFullscreen() });
+    }, { passive: true });
+    document.addEventListener("webkitfullscreenchange", () => {
+      recordTopEdgeDiagnostic("webkit-fullscreen-change", { fullscreen: isFullscreen() });
+    }, { passive: true });
+  }
+
+  function saveTopEdgeDiagnosticLog() {
+    if (!topEdgeDiagnosticRun) return false;
+    topEdgeDiagnosticRun.finalSnapshot = topEdgeDiagnosticSnapshot();
+    topEdgeDiagnosticRun.completedAtEpoch = Date.now();
+    recordTopEdgeDiagnostic("diagnostic-export-requested", {
+      finalSnapshotCaptured: true,
+      operatorMarkers: topEdgeDiagnosticRun.operatorMarkers,
+      precedingEventCount: topEdgeDiagnosticRun.eventSequence
+    });
+    const text = `${JSON.stringify(topEdgeDiagnosticRun, null, 2)}\n`;
+    const filename = `OrderSlot_DiagnosticLog_iPadOS-Chrome_T67-L1-${TOP_EDGE_DIAGNOSTIC_MODE === "measured" ? "Measured" : "Passive"}_v${APP_VERSION}.txt`;
+    const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    link.hidden = true;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+    void navigator.clipboard?.writeText(text).catch(() => {});
+    showToast("T67診断ログを保存しました", { duration: 2600 });
+    return true;
+  }
+
+  function installTopEdgeDiagnosticControl() {
+    if (!topEdgeDiagnosticRun) return;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.id = "topEdgeDiagnosticControl";
+    button.textContent = "T67記録開始";
+    button.setAttribute("aria-label", "T67 browser top-edge診断の記録を開始");
+    button.style.cssText = [
+      "position:fixed",
+      "z-index:2147483000",
+      "left:max(8px, env(safe-area-inset-left))",
+      "bottom:max(8px, env(safe-area-inset-bottom))",
+      "min-width:104px",
+      "min-height:44px",
+      "border:1px solid rgba(255,255,255,.72)",
+      "border-radius:12px",
+      "background:#17324d",
+      "color:#fff",
+      "font:700 13px/1.2 system-ui,sans-serif",
+      "padding:8px 12px",
+      "box-shadow:0 3px 10px rgba(0,0,0,.28)"
+    ].join(";");
+    button.addEventListener("click", () => {
+      if (topEdgeDiagnosticControlState === "idle") {
+        topEdgeDiagnosticControlState = "armed";
+        topEdgeDiagnosticRun.operatorMarkers += 1;
+        recordTopEdgeDiagnostic("operator-before-top-edge", {
+          instruction: "tap browser-owned top edge once after this marker"
+        });
+        button.textContent = "T67ログ保存";
+        button.setAttribute("aria-label", "T67 browser top-edge診断ログを保存");
+        return;
+      }
+      if (topEdgeDiagnosticControlState !== "armed") return;
+      topEdgeDiagnosticControlState = "exporting";
+      topEdgeDiagnosticRun.operatorMarkers += 1;
+      recordTopEdgeDiagnostic("operator-after-top-edge", {
+        instruction: "capture and export after the five-second observation"
+      });
+      saveTopEdgeDiagnosticLog();
+      topEdgeDiagnosticControlState = "exported";
+      button.textContent = "T67保存済み";
+      button.disabled = true;
+    });
+    document.body.appendChild(button);
+  }
 
   function orientationViewportTransitionIsActive() {
     if (!orientationViewportTransition) return false;
@@ -19204,6 +19524,11 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
     const next = { width: visual?.width || innerWidth, height: visual?.height || innerHeight };
     const viewportSizeChanged = Math.abs(next.width - previousVisualViewportSize.width) > 1
       || Math.abs(next.height - previousVisualViewportSize.height) > 1;
+    recordTopEdgeDiagnostic("visual-viewport-change-before-product", {
+      previous: topEdgeDiagnosticViewportCopy(previousVisualViewportSize),
+      next: topEdgeDiagnosticViewportCopy(next),
+      viewportSizeChanged
+    });
     if (Math.abs(next.width - previousVisualViewportSize.width) > 80 || Math.abs(next.height - previousVisualViewportSize.height) > 80) invalidateInFlightLayoutInput();
     lastVisualViewportSize = next;
     if (isFullscreen()) captureFullscreenViewportSnapshot();
@@ -19223,6 +19548,7 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
   window.visualViewport?.addEventListener("resize", handleVisualViewportChange, { passive: true });
   window.visualViewport?.addEventListener("scroll", handleVisualViewportChange, { passive: true });
   window.addEventListener("scroll", () => {
+    recordTopEdgeDiagnostic("window-scroll-before-product");
     updateVisualViewportOriginCompensation();
     if (browserUiResidualRecovery?.suppressInvariant) {
       return;
@@ -19613,6 +19939,7 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
       updateSlotSize();
       updateHistoryScrollHint();
       scheduleAllScrollEdgeUpdates();
+      recordTopEdgeDiagnostic("app-layout-update-completed");
     });
   }
 
@@ -19623,6 +19950,10 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
   }
 
   window.addEventListener("orientationchange", () => {
+    recordTopEdgeDiagnostic("orientation-change-before-product", {
+      orientationType: screen.orientation?.type || null,
+      orientationAngle: screen.orientation?.angle ?? window.orientation ?? null
+    });
     invalidateInFlightLayoutInput();
     clearFullscreenExitOrientationConflict("orientationchange");
     beginOrientationViewportTransition();
@@ -19641,6 +19972,7 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
     }, UI_TIMING.orientationSettle);
   });
   window.addEventListener("resize", () => {
+    recordTopEdgeDiagnostic("window-resize-before-product");
     if (browserUiResidualRecovery
       && !viewportDimensionsMatch(
         getViewportSize(),
@@ -19745,6 +20077,15 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
   document.documentElement.classList.remove("transient-viewport-boot-painting");
   scheduleRootOriginResynchronization("boot");
   installPageZoomGuard();
+  if (topEdgeDiagnosticRun) {
+    document.documentElement.dataset.topEdgeDiagnostic = TOP_EDGE_DIAGNOSTIC_MODE;
+    recordTopEdgeDiagnostic("diagnostic-run-started", {
+      mode: TOP_EDGE_DIAGNOSTIC_MODE,
+      query: `top-edge-diagnostic=${TOP_EDGE_DIAGNOSTIC_MODE}`,
+      targetCase: "T67-L1"
+    });
+    installTopEdgeDiagnosticObservers();
+  }
   installRootPanGuard();
   installScrollEdgeSurfaces();
   reducedMotionQuery?.addEventListener?.("change", syncReducedEffectsClass);
@@ -19752,7 +20093,11 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
   syncReducedEffectsClass();
   if (titleVersion) {
     titleVersion.textContent = APP_VERSION ? `v${APP_VERSION}` : "";
+    if (topEdgeDiagnosticRun) {
+      titleVersion.textContent += `・T67 ${TOP_EDGE_DIAGNOSTIC_MODE}`;
+    }
   }
+  installTopEdgeDiagnosticControl();
   discardLegacyViewportDiagnostics();
   updateViewportCssVariables();
   setIconButton($("soundBtn"), state.soundOn ? iconMarkup.soundOn : iconMarkup.soundOff, state.soundOn ? "音を消す" : "音を出す", "音声");

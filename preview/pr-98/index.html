@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 
 <!-- 順番スロット -->
-<html class="transient-viewport-boot-painting" data-app-version="8.0.130" lang="ja">
+<html class="transient-viewport-boot-painting" data-app-version="8.0.131" lang="ja">
 <head>
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" name="viewport"/>
@@ -11172,10 +11172,9 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
   let innerRecoveryQuietTimer = null;
   let orientationViewportTransition = null;
 
-  // Issue #67 v8.0.129 follow-up. I records the same product event, scheduler,
-  // A1+C, and qualified-retry lifecycle while a diagnostic-only save gate keeps
-  // the log open through the post-action observation window. It adds no probe
-  // and changes neither product geometry nor recovery timing.
+  // Issue #67 v8.0.130 follow-up. I keeps the passive event, scheduler, A1+C,
+  // qualified-retry, and save-gate evidence while the product change below
+  // separates visible-target arrival from stricter fully-settled completion.
   const TOP_EDGE_OBSERVATION_SCHEMA_VERSION = 3;
   const TOP_EDGE_OBSERVATION_FINAL_SAVE_DELAY_MS = 15000;
   const TOP_EDGE_OBSERVATION_BROWSER_UI_SAVE_DELAY_MS = 6000;
@@ -11188,11 +11187,11 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
   };
   const TOP_EDGE_OBSERVATION_MARKERS = {
     I: [
-      { id: "I0", button: "①初期縦を記録", instruction: "PLAY到達後、初期縦向きで5秒待機した時点", action: "initial-portrait-wait", orientation: "portrait", fullscreen: false, topEdge: false },
-      { id: "I1", button: "②FS前横を記録", instruction: "縦から横へ回転し、5秒待機した時点", action: "rotate-portrait-to-landscape", orientation: "landscape", fullscreen: false, topEdge: false },
-      { id: "I2", button: "③FS横を記録", instruction: "横向きのままFullscreenへ入り、5秒待機した時点", action: "enter-fullscreen-landscape", orientation: "landscape", fullscreen: true, topEdge: false },
-      { id: "I3", button: "④解除後横を記録", instruction: "横向きのままアプリ内ボタンでFullscreenを解除し、5秒待機した時点。記録後に縦へ回転し、縦表示が見えたら待機せずtop-edgeを1回操作する", action: "exit-fullscreen-landscape-before-immediate-rotation-top-edge", orientation: "landscape", fullscreen: false, topEdge: false, arm: true },
-      { id: "I4", button: "⑤ログを保存", instruction: "縦回転後に待機せずtop-edgeを1回操作し、保存ボタンが有効になるまで画面へ触れずに待機した時点", action: "portrait-top-edge-during-rotation-recovery", orientation: "portrait", fullscreen: false, topEdge: true }
+      { id: "I0", button: "①記録", instruction: "PLAY到達後、初期縦向きで5秒待機した時点", action: "initial-portrait-wait", orientation: "portrait", fullscreen: false, topEdge: false },
+      { id: "I1", button: "②記録", instruction: "縦から横へ回転し、5秒待機した時点", action: "rotate-portrait-to-landscape", orientation: "landscape", fullscreen: false, topEdge: false },
+      { id: "I2", button: "③記録", instruction: "横向きのままFullscreenへ入り、5秒待機した時点", action: "enter-fullscreen-landscape", orientation: "landscape", fullscreen: true, topEdge: false },
+      { id: "I3", button: "④記録", instruction: "横向きのままアプリ内ボタンでFullscreenを解除し、5秒待機した時点。記録後に縦へ回転し、縦表示が見えたら待機せずtop-edgeを1回操作する", action: "exit-fullscreen-landscape-before-immediate-rotation-top-edge", orientation: "landscape", fullscreen: false, topEdge: false, arm: true },
+      { id: "I4", button: "⑤保存", instruction: "縦回転後に待機せずtop-edgeを1回操作し、保存ボタンが有効になるまで画面へ触れずに待機した時点", action: "portrait-top-edge-during-rotation-recovery", orientation: "portrait", fullscreen: false, topEdge: true }
     ]
   };
   const topEdgeObservationPageStartedAt = performance.now();
@@ -11230,6 +11229,7 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
   let topEdgeObservationFinalUnlockAt = null;
 
   function topEdgeObservationRound(value) {
+    if (value === null || value === undefined) return null;
     const number = Number(value);
     return Number.isFinite(number) ? Math.round(number * 100) / 100 : null;
   }
@@ -11303,6 +11303,7 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
           exitReason: eligibility.exitReason || null,
           armedAt: topEdgeObservationRound(eligibility.armedAt),
           lastRecoveryAt: topEdgeObservationRound(eligibility.lastRecoveryAt),
+          lastRotationRecoveryReachedVisibleTargetAt: topEdgeObservationRound(eligibility.lastRotationRecoveryReachedVisibleTargetAt),
           lastCompletedRotationRecoveryAt: topEdgeObservationRound(eligibility.lastCompletedRotationRecoveryAt)
         } : null,
         recovery: recovery ? {
@@ -11372,6 +11373,7 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
         resetModalBox: topEdgeObservationRect(resetModal.querySelector(".reset-modal-box")),
         confirmModal: topEdgeObservationRect(confirmModal),
         confirmModalBox: topEdgeObservationRect(confirmModal.querySelector(".modal-box")),
+        diagnosticControl: topEdgeObservationRect(topEdgeObservationControl),
         appHeight: rootStyle.getPropertyValue("--app-height").trim(),
         appCoordinateHeight: rootStyle.getPropertyValue("--app-coordinate-height").trim(),
         playSafeBottom: rootStyle.getPropertyValue("--play-safe-bottom").trim(),
@@ -11413,7 +11415,7 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
     topEdgeObservationFinalUnlockAt = requestedUnlockAt;
     topEdgeObservationControlState = "waiting-I4-save-gate";
     topEdgeObservationControl.disabled = true;
-    topEdgeObservationControl.textContent = "⑤操作後の表示を記録中";
+    topEdgeObservationControl.textContent = "⑤待機中";
     recordTopEdgeObservation("diagnostic-final-save-gate-scheduled", {
       reason,
       minimumDelayMs: delayMs
@@ -11497,16 +11499,17 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
       "position:fixed",
       "z-index:2147483000",
       "left:max(8px, env(safe-area-inset-left))",
-      "top:50%",
-      "transform:translateY(-50%)",
-      "min-width:116px",
+      "top:max(72px, calc(env(safe-area-inset-top) + 48px))",
+      "min-width:88px",
       "min-height:44px",
+      "max-width:calc(100vw - 16px)",
       "border:1px solid rgba(255,255,255,.72)",
       "border-radius:12px",
       "background:#17324d",
       "color:#fff",
       "font:700 13px/1.2 system-ui,sans-serif",
       "padding:8px 12px",
+      "touch-action:manipulation",
       "box-shadow:0 3px 10px rgba(0,0,0,.28)"
     ].join(";");
     button.addEventListener("click", () => {
@@ -12477,6 +12480,7 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
       exitReason: reason || null,
       armedAt: performance.now(),
       lastRecoveryAt: null,
+      lastRotationRecoveryReachedVisibleTargetAt: null,
       lastCompletedRotationRecoveryAt: null
     };
     return true;
@@ -12549,10 +12553,13 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
         <= VIEWPORT_GEOMETRY_TOLERANCE_PX
       && Math.abs((Number(window.innerHeight) || 0) - visible.height)
         <= VIEWPORT_GEOMETRY_TOLERANCE_PX;
-    if (recovery.triggerKind === "rotation"
+    const rotationReachedVisibleTarget = recovery.triggerKind === "rotation"
       && eligibility?.generation === recovery.experienceGeneration
-      && viewportDimensionsMatch(visible, recovery.target, VIEWPORT_GEOMETRY_TOLERANCE_PX)
-      && innerMatchesVisible) {
+      && viewportDimensionsMatch(visible, recovery.target, VIEWPORT_GEOMETRY_TOLERANCE_PX);
+    if (rotationReachedVisibleTarget) {
+      eligibility.lastRotationRecoveryReachedVisibleTargetAt = performance.now();
+    }
+    if (rotationReachedVisibleTarget && innerMatchesVisible) {
       eligibility.lastCompletedRotationRecoveryAt = performance.now();
     }
     const heightGap = recovery.target.height - visible.height;
@@ -12578,6 +12585,7 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
       triggerKind: recovery.triggerKind,
       browserUiRetryAttempt: recovery.browserUiRetryAttempt,
       heightGap: topEdgeObservationRound(heightGap),
+      rotationReachedVisibleTarget,
       innerMatchesVisible,
       browserUiResidualPersists,
       retryDelay: browserUiResidualPersists ? topEdgeObservationRound(retryDelay) : null
@@ -12821,7 +12829,7 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
       || heightGap > BROWSER_UI_RESIDUAL_OCCLUSION_MAX_PX) return reject("residual-outside-range");
 
     const browserUiReappearanceEligible = triggerKind === "browser-ui"
-      && eligibility.lastCompletedRotationRecoveryAt !== null
+      && eligibility.lastRotationRecoveryReachedVisibleTargetAt !== null
       && Boolean(eligibility.exitOrientation)
       && orientation !== eligibility.exitOrientation;
     if (triggerKind !== "rotation" && !browserUiReappearanceEligible) {

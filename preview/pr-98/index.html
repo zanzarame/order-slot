@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 
 <!-- 順番スロット -->
-<html class="transient-viewport-boot-painting" data-app-version="8.0.134" lang="ja">
+<html class="transient-viewport-boot-painting" data-app-version="8.0.135" lang="ja">
 <head>
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" name="viewport"/>
@@ -8787,6 +8787,8 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
   // Configuration
   // ---------------------------------------------------------------------------
   const APP_VERSION = document.documentElement.dataset.appVersion || "";
+  const TOP_EDGE_OBSERVATION_CASE = new URLSearchParams(location.search)
+    .get("t67-scheduler-boundary") === "1" ? "S" : null;
   const MAX_PARTICIPANTS = 40;
   const NUMBER_RANGE_MIN = 2;
   const NUMBER_RANGE_MAX = 40;
@@ -8852,9 +8854,6 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
   const POST_FULLSCREEN_ROTATION_OVERFLOW_SCROLL_RECOVERY_VERIFY_MS = 360;
   const POST_FULLSCREEN_ROTATION_OVERFLOW_SCROLL_RECOVERY_POST_CLEANUP_MS = 360;
   const POST_FULLSCREEN_ROTATION_OVERFLOW_SCROLL_RECOVERY_COOLDOWN_MS = 900;
-  // A qualifying browser-UI attempt can finish while the same small residual
-  // remains. Recheck once after cleanup and the existing cooldown; never poll
-  // continuously and never extend the retry to rotation or another context.
   const POST_FULLSCREEN_BROWSER_UI_RECOVERY_MAX_RETRIES = 1;
   const POST_FULLSCREEN_BROWSER_UI_RECOVERY_RETRY_SETTLE_MS = 24;
   const WINDOWED_BASELINE_SETTLE_MS = 160;
@@ -10962,18 +10961,29 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
 
   async function ensureWindowedBeforeLeavingPlay(destination) {
     const snapshot = capturePlayScreenExitState();
+    recordTopEdgeObservation("play-screen-exit-requested", {
+      destination,
+      screen: state.screen,
+      fullscreen: isFullscreen(),
+      fullscreenTransition: state.fullscreenTransition,
+      fullscreenExitRestoreActive: Boolean(fullscreenExitViewportRestore)
+    }, { measureShell: true });
     if (state.screen !== Screen.PLAY) {
+      recordTopEdgeObservation("play-screen-exit-rejected", { destination, reason: "not-play" });
       return false;
     }
     if (playScreenExitRequest) {
+      recordTopEdgeObservation("play-screen-exit-rejected", { destination, reason: "request-active" });
       return false;
     }
     // Check the explicit transition before fullscreenElement. During ENTERING
     // it may still be null, and during EXITING it may already be null.
     if (isFullscreenTransitionActive()) {
+      recordTopEdgeObservation("play-screen-exit-rejected", { destination, reason: "fullscreen-transition-active" });
       return false;
     }
     if (!isFullscreen() && !fullscreenExitViewportRestore) {
+      recordTopEdgeObservation("play-screen-exit-ready", { destination, route: "already-windowed" });
       return true;
     }
 
@@ -10984,6 +10994,10 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
       startedAt: performance.now()
     };
     playScreenExitRequest = request;
+    recordTopEdgeObservation("play-screen-exit-armed", {
+      generation: request.generation,
+      destination
+    });
     let success = false;
     try {
       if (isFullscreen()) {
@@ -10993,22 +11007,47 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
           purpose: "play-screen-exit"
         });
         if (!result.success) {
+          recordTopEdgeObservation("play-screen-exit-failed", {
+            generation: request.generation,
+            destination,
+            reason: "fullscreen-exit-failed"
+          }, { measureShell: true });
           return false;
         }
       }
 
       const geometryReady = await waitForFullscreenExitScreenTransitionReady();
       if (!geometryReady) {
+        recordTopEdgeObservation("play-screen-exit-failed", {
+          generation: request.generation,
+          destination,
+          reason: "geometry-not-ready"
+        }, { measureShell: true });
         showToast("画面サイズの復帰を確認できませんでした");
         return false;
       }
       if (!playScreenExitStateMatches(snapshot)) {
+        recordTopEdgeObservation("play-screen-exit-failed", {
+          generation: request.generation,
+          destination,
+          reason: "play-state-mismatch"
+        }, { measureShell: true });
         showToast("スロットの状態を確認できませんでした");
         return false;
       }
       success = true;
+      recordTopEdgeObservation("play-screen-exit-ready", {
+        generation: request.generation,
+        destination,
+        route: "verified-after-request"
+      }, { measureShell: true });
       return true;
     } finally {
+      recordTopEdgeObservation("play-screen-exit-finished", {
+        generation: request.generation,
+        destination,
+        success
+      }, { measureShell: true });
       if (playScreenExitRequest?.generation === request.generation) {
         playScreenExitRequest = null;
       }
@@ -11129,6 +11168,305 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
   let innerRecoveryCandidate = null;
   let innerRecoveryQuietTimer = null;
   let orientationViewportTransition = null;
+
+  // Issue #67 v8.0.134 scheduler-boundary diagnostic. It records only existing
+  // product hook calls and state; it adds no browser-event listener, geometry
+  // read, periodic probe, or recovery request.
+  const TOP_EDGE_OBSERVATION_SCHEMA_VERSION = 5;
+  const TOP_EDGE_OBSERVATION_FINAL_SAVE_DELAY_MS = 15000;
+  const TOP_EDGE_OBSERVATION_BROWSER_UI_SAVE_DELAY_MS = 6000;
+  const TOP_EDGE_OBSERVATION_DEFINITIONS = {
+    S: {
+      observationMode: "existing-product-hooks-state-only",
+      diagnosisFocus: "scheduler-recovery-active-cooldown-rejection-without-added-browser-listener-or-geometry-read",
+      browserEventRootExtentRead: false
+    }
+  };
+  const TOP_EDGE_OBSERVATION_MARKER_PLAN = [
+    { id: "S0", button: "①記録", instruction: "PLAY到達後、初期縦向きで5秒待機した時点", action: "initial-portrait-wait", orientation: "portrait", fullscreen: false, topEdge: false },
+    { id: "S1", button: "②記録", instruction: "縦から横へ回転し、5秒待機した時点", action: "rotate-portrait-to-landscape", orientation: "landscape", fullscreen: false, topEdge: false },
+    { id: "S2", button: "③記録", instruction: "横向きのままFullscreenへ入り、5秒待機した時点", action: "enter-fullscreen-landscape", orientation: "landscape", fullscreen: true, topEdge: false },
+    { id: "S3", button: "④記録", instruction: "横向きのままアプリ内ボタンでFullscreenを解除し、5秒待機した時点。記録後に縦へ回転し、縦表示が見えたら待機せずtop-edgeを1回操作する", action: "exit-fullscreen-landscape-before-immediate-rotation-top-edge", orientation: "landscape", fullscreen: false, topEdge: false, arm: true },
+    { id: "S4", button: "⑤記録", instruction: "1回目のtop-edge操作から5秒以上待った時点。記録後、縦向きのままtop-edgeをもう1回操作する", action: "portrait-first-top-edge-after-five-seconds", orientation: "portrait", fullscreen: false, topEdge: true },
+    { id: "S5", button: "⑥保存", instruction: "2回目のtop-edge操作から5秒以上待った時点", action: "portrait-second-top-edge-after-five-seconds", orientation: "portrait", fullscreen: false, topEdge: true }
+  ];
+  const TOP_EDGE_OBSERVATION_MARKERS = {
+    S: TOP_EDGE_OBSERVATION_MARKER_PLAN
+  };
+  const topEdgeObservationPageStartedAt = performance.now();
+  const topEdgeObservationDefinition = TOP_EDGE_OBSERVATION_CASE
+    ? TOP_EDGE_OBSERVATION_DEFINITIONS[TOP_EDGE_OBSERVATION_CASE]
+    : null;
+  const topEdgeObservationMarkers = TOP_EDGE_OBSERVATION_CASE
+    ? TOP_EDGE_OBSERVATION_MARKERS[TOP_EDGE_OBSERVATION_CASE]
+    : [];
+  const topEdgeObservationRun = TOP_EDGE_OBSERVATION_CASE ? {
+    kind: "post-fullscreen-scheduler-boundary",
+    schemaVersion: TOP_EDGE_OBSERVATION_SCHEMA_VERSION,
+    appVersion: APP_VERSION,
+    mode: topEdgeObservationDefinition.observationMode,
+    targetCase: "T67-SR",
+    observationCase: "S",
+    plannedActions: { ...topEdgeObservationDefinition },
+    runId: `t67-scheduler-boundary-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    startedAtEpoch: Date.now(),
+    completedAtEpoch: null,
+    userAgent: navigator.userAgent,
+    eventSequence: 0,
+    operatorMarkers: 0,
+    observationArmedAt: null,
+    events: [],
+    finalSnapshot: null
+  } : null;
+  let topEdgeObservationControlState = topEdgeObservationMarkers.length
+    ? `awaiting-${topEdgeObservationMarkers[0].id}`
+    : "inactive";
+  let topEdgeObservationMarkerIndex = 0;
+  let topEdgeObservationArmedAt = null;
+  let topEdgeObservationControl = null;
+  let topEdgeObservationFinalUnlockTimer = null;
+  let topEdgeObservationFinalUnlockAt = null;
+
+  function topEdgeObservationRound(value) {
+    if (value === null || value === undefined) return null;
+    const number = Number(value);
+    return Number.isFinite(number) ? Math.round(number * 100) / 100 : null;
+  }
+
+  function topEdgeObservationViewportCopy(viewport) {
+    if (!viewport) return null;
+    return {
+      width: topEdgeObservationRound(viewport.width),
+      height: topEdgeObservationRound(viewport.height)
+    };
+  }
+
+  function topEdgeObservationSnapshot() {
+    // State-only: no Viewport, scroll extent, computed style, or element
+    // rectangle is synchronously read by this diagnostic snapshot.
+    const eligibility = postFullscreenWindowedRotationRecoveryEligibility;
+    const recovery = postFullscreenWindowedRotationOverflowScrollRecovery;
+    return {
+      app: {
+        screen: state.screen,
+        playPhase: state.playPhase,
+        fullscreen: isFullscreen(),
+        fullscreenTransition: state.fullscreenTransition,
+        orientationTransitionActive: Boolean(orientationViewportTransition),
+        residualActive: Boolean(browserUiViewportResidual),
+        eligibility: eligibility ? {
+          generation: eligibility.generation,
+          exitOrientation: eligibility.exitOrientation || null,
+          exitReason: eligibility.exitReason || null,
+          armedAt: topEdgeObservationRound(eligibility.armedAt),
+          lastRecoveryAt: topEdgeObservationRound(eligibility.lastRecoveryAt),
+          lastRotationRecoveryFinishedAt: topEdgeObservationRound(eligibility.lastRotationRecoveryFinishedAt),
+          lastRotationRecoveryReachedVisibleTargetAt: topEdgeObservationRound(eligibility.lastRotationRecoveryReachedVisibleTargetAt),
+          lastCompletedRotationRecoveryAt: topEdgeObservationRound(eligibility.lastCompletedRotationRecoveryAt)
+        } : null,
+        recovery: recovery ? {
+          generation: recovery.generation,
+          experienceGeneration: recovery.experienceGeneration,
+          orientation: recovery.orientation || null,
+          source: recovery.source || null,
+          trigger: recovery.trigger || null,
+          triggerKind: recovery.triggerKind || null,
+          browserUiRetryAttempt: recovery.browserUiRetryAttempt ?? null,
+          phase: recovery.phase || null,
+          requestedAt: topEdgeObservationRound(recovery.requestedAt),
+          stylesApplied: Boolean(recovery.stylesApplied),
+          lastBlockReason: recovery.lastBlockReason || null
+        } : null,
+        fullscreenExitRestoreActive: Boolean(fullscreenExitViewportRestore),
+        fullscreenExitOrientationConflictActive: Boolean(fullscreenExitOrientationConflict),
+        retryTimerPending: postFullscreenWindowedRotationOverflowScrollRecoveryRetryTimer !== null,
+        rootOriginResyncPending: rootOriginResyncTimer !== null || rootOriginResyncFrame !== null,
+        rootOriginResyncWriteActive
+      }
+    };
+  }
+
+  function recordTopEdgeObservation(name, detail = null, { measureShell = false } = {}) {
+    if (!topEdgeObservationRun) return;
+    topEdgeObservationRun.events.push({
+      sequence: ++topEdgeObservationRun.eventSequence,
+      t: topEdgeObservationRound(performance.now() - topEdgeObservationPageStartedAt),
+      name,
+      controlState: topEdgeObservationControlState,
+      snapshot: topEdgeObservationSnapshot({ measureShell }),
+      rootExtentRead: null,
+      detail
+    });
+    if (name === "post-fullscreen-recovery-scheduled"
+      && detail?.triggerKind === "browser-ui") {
+      scheduleTopEdgeObservationFinalUnlock(
+        "logger-distinguishable-browser-ui",
+        TOP_EDGE_OBSERVATION_BROWSER_UI_SAVE_DELAY_MS,
+        topEdgeObservationMarkerIndex
+      );
+    }
+  }
+
+  function scheduleTopEdgeObservationFinalUnlock(reason, delayMs, markerIndex) {
+    if (!topEdgeObservationRun
+      || ![4, 5].includes(markerIndex)
+      || topEdgeObservationMarkerIndex !== markerIndex
+      || !topEdgeObservationControl) return;
+    const requestedAt = performance.now();
+    const requestedUnlockAt = requestedAt + delayMs;
+    if (topEdgeObservationFinalUnlockAt !== null
+      && topEdgeObservationFinalUnlockAt >= requestedUnlockAt) return;
+    clearTimeout(topEdgeObservationFinalUnlockTimer);
+    topEdgeObservationFinalUnlockAt = requestedUnlockAt;
+    const marker = topEdgeObservationMarkers[markerIndex];
+    topEdgeObservationControlState = `waiting-${marker.id}-save-gate`;
+    topEdgeObservationControl.disabled = true;
+    topEdgeObservationControl.textContent = markerIndex === 4 ? "⑤待機中" : "⑥待機中";
+    recordTopEdgeObservation("diagnostic-final-save-gate-scheduled", {
+      reason,
+      minimumDelayMs: delayMs,
+      markerId: marker.id
+    });
+    topEdgeObservationFinalUnlockTimer = setTimeout(() => {
+      topEdgeObservationFinalUnlockTimer = null;
+      if (topEdgeObservationMarkerIndex !== markerIndex) return;
+      topEdgeObservationControlState = `awaiting-${marker.id}`;
+      recordTopEdgeObservation("diagnostic-final-save-gate-unlocked", {
+        reason,
+        minimumDelayMs: delayMs,
+        markerId: marker.id
+      }, { measureShell: true });
+      topEdgeObservationControl.disabled = false;
+      topEdgeObservationControl.textContent = marker.button;
+      topEdgeObservationControl.setAttribute(
+        "aria-label",
+        `T67-SR ${marker.instruction}`
+      );
+      showToast(markerIndex === 4
+        ? "1回目から5秒以上経過しました。⑤記録を押せます"
+        : "2回目から5秒以上経過しました。⑥保存を押せます", { duration: 3000 });
+    }, Math.max(0, requestedUnlockAt - performance.now()));
+  }
+
+  function startTopEdgeObservationWindow() {
+    if (!topEdgeObservationRun || topEdgeObservationArmedAt !== null) return;
+    topEdgeObservationArmedAt = performance.now();
+    topEdgeObservationRun.observationArmedAt = topEdgeObservationRound(
+      topEdgeObservationArmedAt - topEdgeObservationPageStartedAt
+    );
+    recordTopEdgeObservation("top-edge-observation-armed", {
+      mode: topEdgeObservationRun.mode,
+      diagnosisFocus: topEdgeObservationDefinition.diagnosisFocus,
+      browserEventRootExtentRead: topEdgeObservationDefinition.browserEventRootExtentRead
+    });
+  }
+
+  function saveTopEdgeObservationLog() {
+    if (!topEdgeObservationRun) return false;
+    topEdgeObservationRun.finalSnapshot = topEdgeObservationSnapshot({ measureShell: true });
+    topEdgeObservationRun.completedAtEpoch = Date.now();
+    recordTopEdgeObservation("diagnostic-export-requested", {
+      finalSnapshotCaptured: true,
+      operatorMarkers: topEdgeObservationRun.operatorMarkers,
+      expectedOperatorMarkers: topEdgeObservationMarkers.length,
+      precedingEventCount: topEdgeObservationRun.eventSequence
+    });
+    const text = `${JSON.stringify(topEdgeObservationRun, null, 2)}\n`;
+    const filename = `OrderSlot_DiagnosticLog_iPadOS-Chrome_T67-SR_v${APP_VERSION}.txt`;
+    const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    link.hidden = true;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+    showToast("T67-SR診断ログを保存しました", { duration: 2600 });
+    return true;
+  }
+
+  function installTopEdgeObservationDiagnostic() {
+    if (!topEdgeObservationRun) return;
+    const button = document.createElement("button");
+    topEdgeObservationControl = button;
+    button.type = "button";
+    button.id = "topEdgeObservationDiagnosticControl";
+    button.textContent = topEdgeObservationMarkers[0].button;
+    button.setAttribute("aria-label", `T67-SR ${topEdgeObservationMarkers[0].instruction}`);
+    button.style.cssText = [
+      "position:fixed",
+      "z-index:2147483000",
+      "left:max(8px, env(safe-area-inset-left))",
+      "top:max(72px, calc(env(safe-area-inset-top) + 48px))",
+      "min-width:88px",
+      "min-height:44px",
+      "max-width:calc(100vw - 16px)",
+      "border:1px solid rgba(255,255,255,.72)",
+      "border-radius:12px",
+      "background:#17324d",
+      "color:#fff",
+      "font:700 13px/1.2 system-ui,sans-serif",
+      "padding:8px 12px",
+      "touch-action:manipulation",
+      "box-shadow:0 3px 10px rgba(0,0,0,.28)"
+    ].join(";");
+    button.addEventListener("click", () => {
+      if (topEdgeObservationMarkerIndex >= topEdgeObservationMarkers.length) return;
+      const marker = topEdgeObservationMarkers[topEdgeObservationMarkerIndex];
+      topEdgeObservationControlState = `recording-${marker.id}`;
+      topEdgeObservationRun.operatorMarkers += 1;
+      recordTopEdgeObservation("operator-sequence-marker", {
+        markerId: marker.id,
+        markerIndex: topEdgeObservationMarkerIndex,
+        instruction: marker.instruction,
+        plannedActionBeforeMarker: marker.action,
+        topEdgeExpectedBeforeMarker: marker.topEdge,
+        expectedOrientation: marker.orientation,
+        expectedFullscreen: marker.fullscreen
+      }, { measureShell: true });
+      if (marker.arm) startTopEdgeObservationWindow();
+      topEdgeObservationMarkerIndex += 1;
+      if (topEdgeObservationMarkerIndex < topEdgeObservationMarkers.length) {
+        const nextMarker = topEdgeObservationMarkers[topEdgeObservationMarkerIndex];
+        topEdgeObservationControlState = `awaiting-${nextMarker.id}`;
+        button.textContent = nextMarker.button;
+        button.setAttribute("aria-label", `T67-SR ${nextMarker.instruction}`);
+        if (marker.id === "S3") {
+          scheduleTopEdgeObservationFinalUnlock(
+            "operator-marker-S3",
+            TOP_EDGE_OBSERVATION_FINAL_SAVE_DELAY_MS,
+            4
+          );
+          showToast("縦表示が見えたら待機せず最上部を1回操作し、⑤記録が有効になるまで待ってください", { duration: 5200 });
+        } else if (marker.id === "S4") {
+          scheduleTopEdgeObservationFinalUnlock(
+            "operator-marker-S4",
+            8000,
+            5
+          );
+          showToast("最上部をもう1回操作し、⑥保存が有効になるまで待ってください", { duration: 4600 });
+        } else {
+          showToast(`${marker.id}を記録しました`, { duration: 1400 });
+        }
+        return;
+      }
+      topEdgeObservationControlState = "exporting";
+      saveTopEdgeObservationLog();
+      topEdgeObservationControlState = "exported";
+      button.textContent = "T67-SR保存済み";
+      button.disabled = true;
+    });
+    document.body.appendChild(button);
+    document.documentElement.dataset.t67SchedulerBoundary = "active";
+    recordTopEdgeObservation("diagnostic-run-started", {
+      query: "t67-scheduler-boundary=1",
+      targetCase: "T67-SR",
+      plannedActions: { ...topEdgeObservationDefinition },
+      expectedOperatorMarkers: topEdgeObservationMarkers.length
+    });
+  }
   let lastFullscreenLayoutViewport = null;
   let lastFullscreenVisibleViewport = null;
   let fullscreenSnapshotFrozenForExit = false;
@@ -11639,6 +11977,16 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
     const recoveryOrientation = completedRestore?.orientation
       || (recoveryTarget ? getViewportOrientation(recoveryTarget) : null);
 
+    recordTopEdgeObservation("fullscreen-exit-restore-clearing", {
+      reason,
+      preservePaint,
+      scheduleResidualRecovery,
+      armRotationRecovery,
+      completedPhase: completedRestore?.phase || null,
+      orientationConflictObserved: Boolean(completedRestore?.orientationConflictObserved),
+      recoveryOrientation
+    }, { measureShell: true });
+
     fullscreenExitViewportRestore = null;
     fullscreenSnapshotFrozenForExit = false;
     cancelFullscreenExitViewportVerification();
@@ -12114,10 +12462,8 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
         <= VIEWPORT_GEOMETRY_TOLERANCE_PX
       && Math.abs((Number(window.innerHeight) || 0) - visible.height)
         <= VIEWPORT_GEOMETRY_TOLERANCE_PX;
-    // Issue #67: keep strict visible-target and fully-settled evidence, while
-    // separately remembering that this experience's finite rotation recovery
-    // finished. iPadOS Chrome can finish short and later expose a recoverable
-    // bounded browser-UI residual after public geometry settles.
+    // Keep strict visible-target and fully-settled evidence while separately
+    // retaining the v8.0.134 finite-finish qualification under diagnosis.
     const rotationRecoveryFinished = recovery.triggerKind === "rotation"
       && eligibility?.generation === recovery.experienceGeneration;
     const rotationReachedVisibleTarget = rotationRecoveryFinished
@@ -12148,16 +12494,44 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
         + POST_FULLSCREEN_ROTATION_OVERFLOW_SCROLL_RECOVERY_COOLDOWN_MS
         + POST_FULLSCREEN_BROWSER_UI_RECOVERY_RETRY_SETTLE_MS) - performance.now()
     );
+    recordTopEdgeObservation("post-fullscreen-recovery-finished", {
+      generation: recovery.generation,
+      trigger: recovery.trigger,
+      triggerKind: recovery.triggerKind,
+      browserUiRetryAttempt: recovery.browserUiRetryAttempt,
+      heightGap: topEdgeObservationRound(heightGap),
+      rotationRecoveryFinished,
+      rotationReachedVisibleTarget,
+      innerMatchesVisible,
+      browserUiResidualPersists,
+      retryDelay: browserUiResidualPersists ? topEdgeObservationRound(retryDelay) : null
+    }, { measureShell: true });
     clearPostFullscreenWindowedRotationOverflowScrollRecovery({ restoreStyles: false });
     if (browserUiResidualPersists) {
+      recordTopEdgeObservation("post-fullscreen-browser-ui-retry-scheduled", {
+        retryEligibilityGeneration,
+        retryAttempt,
+        retryDelay: topEdgeObservationRound(retryDelay)
+      });
       postFullscreenWindowedRotationOverflowScrollRecoveryRetryTimer = setTimeout(() => {
         postFullscreenWindowedRotationOverflowScrollRecoveryRetryTimer = null;
-        if (postFullscreenWindowedRotationRecoveryEligibility?.generation
-          !== retryEligibilityGeneration) return;
-        schedulePostFullscreenWindowedRotationOverflowScrollRecovery(
+        const generationMatches = postFullscreenWindowedRotationRecoveryEligibility?.generation
+          === retryEligibilityGeneration;
+        recordTopEdgeObservation("post-fullscreen-browser-ui-retry-fired", {
+          retryEligibilityGeneration,
+          currentEligibilityGeneration: postFullscreenWindowedRotationRecoveryEligibility?.generation ?? null,
+          retryAttempt,
+          generationMatches
+        });
+        if (!generationMatches) return;
+        const scheduled = schedulePostFullscreenWindowedRotationOverflowScrollRecovery(
           "browser-ui-qualified-retry",
           { browserUiRetryAttempt: retryAttempt }
         );
+        recordTopEdgeObservation("post-fullscreen-browser-ui-retry-result", {
+          retryAttempt,
+          scheduled
+        }, { measureShell: true });
       }, retryDelay);
     }
   }
@@ -12167,6 +12541,12 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
       || postFullscreenWindowedRotationOverflowScrollRecovery.generation !== recovery.generation) return;
     postFullscreenWindowedRotationOverflowScrollRecoveryVerifyTimer = null;
     recovery.phase = "cleanup-applied";
+    recordTopEdgeObservation("post-fullscreen-recovery-verifying", {
+      generation: recovery.generation,
+      trigger: recovery.trigger,
+      triggerKind: recovery.triggerKind,
+      browserUiRetryAttempt: recovery.browserUiRetryAttempt
+    });
 
     restorePostFullscreenWindowedRotationOverflowScrollRecoveryStyles(recovery);
     void document.documentElement.scrollHeight;
@@ -12189,9 +12569,17 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
     if (!postFullscreenWindowedRotationOverflowScrollRecovery
       || postFullscreenWindowedRotationOverflowScrollRecovery.generation !== recovery.generation) return;
     postFullscreenWindowedRotationOverflowScrollRecoveryTimer = null;
+    recordTopEdgeObservation("post-fullscreen-recovery-run", {
+      generation: recovery.generation,
+      trigger: recovery.trigger,
+      triggerKind: recovery.triggerKind,
+      browserUiRetryAttempt: recovery.browserUiRetryAttempt,
+      phase: recovery.phase
+    });
     const root = document.documentElement;
     const body = document.body;
     if (!body) {
+      recordTopEdgeObservation("post-fullscreen-recovery-aborted", { reason: "body-missing" });
       clearPostFullscreenWindowedRotationOverflowScrollRecovery();
       return;
     }
@@ -12200,11 +12588,21 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
     if (blockReason) {
       const elapsed = performance.now() - recovery.requestedAt;
       if (elapsed >= POST_FULLSCREEN_ROTATION_OVERFLOW_SCROLL_RECOVERY_TIMEOUT_MS) {
+        recordTopEdgeObservation("post-fullscreen-recovery-timeout", {
+          generation: recovery.generation,
+          blockReason,
+          elapsed: topEdgeObservationRound(elapsed)
+        }, { measureShell: true });
         clearPostFullscreenWindowedRotationOverflowScrollRecovery();
         return;
       }
       if (recovery.lastBlockReason !== blockReason) {
         recovery.lastBlockReason = blockReason;
+        recordTopEdgeObservation("post-fullscreen-recovery-blocked", {
+          generation: recovery.generation,
+          blockReason,
+          elapsed: topEdgeObservationRound(elapsed)
+        });
       }
       postFullscreenWindowedRotationOverflowScrollRecoveryTimer = setTimeout(
         () => runPostFullscreenWindowedRotationOverflowScrollRecovery(recovery),
@@ -12226,6 +12624,11 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
     // untouched. No intentional 1px range is created.
     root.style.setProperty("overflow-y", "auto", "important");
     recovery.stylesApplied = true;
+    recordTopEdgeObservation("post-fullscreen-recovery-a1-applied", {
+      generation: recovery.generation,
+      trigger: recovery.trigger,
+      browserUiRetryAttempt: recovery.browserUiRetryAttempt
+    });
 
     void getComputedStyle(root).overflowY;
     void root.scrollHeight;
@@ -12233,6 +12636,11 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
     const relaxedClientHeight = scrollingElement.clientHeight;
     const rangeIntroducedByOverflow = relaxedScrollHeight > relaxedClientHeight + .5;
     if (rangeIntroducedByOverflow) {
+      recordTopEdgeObservation("post-fullscreen-recovery-aborted", {
+        reason: "a1-introduced-scroll-range",
+        relaxedScrollHeight,
+        relaxedClientHeight
+      }, { measureShell: true });
       clearPostFullscreenWindowedRotationOverflowScrollRecovery();
       return;
     }
@@ -12245,6 +12653,12 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
       postFullscreenWindowedRotationOverflowScrollRecoveryFrame = null;
       if (!postFullscreenWindowedRotationOverflowScrollRecovery
         || postFullscreenWindowedRotationOverflowScrollRecovery.generation !== recovery.generation) return;
+      recordTopEdgeObservation("post-fullscreen-recovery-scroll-requested", {
+        generation: recovery.generation,
+        requestedX: 0,
+        requestedY: BROWSER_UI_RESIDUAL_RECOVERY_SCROLL_PX,
+        browserUiRetryAttempt: recovery.browserUiRetryAttempt
+      });
       try { window.scrollTo(0, BROWSER_UI_RESIDUAL_RECOVERY_SCROLL_PX); } catch (_error) { /* Best effort. */ }
       recovery.phase = "scroll-request-issued";
 
@@ -12279,19 +12693,34 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
     trigger = "windowed-residual",
     { browserUiRetryAttempt = 0 } = {}
   ) {
+    recordTopEdgeObservation("post-fullscreen-recovery-schedule-requested", {
+      trigger,
+      browserUiRetryAttempt
+    });
+    const reject = reason => {
+      recordTopEdgeObservation("post-fullscreen-recovery-schedule-rejected", {
+        trigger,
+        browserUiRetryAttempt,
+        reason
+      });
+      return false;
+    };
     const eligibility = postFullscreenWindowedRotationRecoveryEligibility;
-    if (!POST_FULLSCREEN_ROTATION_OVERFLOW_SCROLL_RECOVERY_ENABLED || !eligibility) return false;
-    if (postFullscreenWindowedRotationOverflowScrollRecovery) return false;
-    if (state.screen !== Screen.PLAY || document.hidden || isFullscreen() || isFullscreenTransitionActive()) return false;
-    // A retry belongs only to the completed browser-UI path that scheduled it.
-    // If a new ordinary rotation has begun, let that path establish its own
-    // trigger and recovery instead of reclassifying this retry as rotation.
-    if (browserUiRetryAttempt > 0 && orientationViewportTransition) return false;
+    if (!POST_FULLSCREEN_ROTATION_OVERFLOW_SCROLL_RECOVERY_ENABLED) return reject("disabled");
+    if (!eligibility) return reject("eligibility-missing");
+    if (postFullscreenWindowedRotationOverflowScrollRecovery) return reject("recovery-active");
+    if (state.screen !== Screen.PLAY) return reject("not-play");
+    if (document.hidden) return reject("document-hidden");
+    if (isFullscreen()) return reject("fullscreen-active");
+    if (isFullscreenTransitionActive()) return reject("fullscreen-transition-active");
+    if (browserUiRetryAttempt > 0 && orientationViewportTransition) {
+      return reject("retry-during-new-orientation-transition");
+    }
 
     const now = performance.now();
     if (eligibility.lastRecoveryAt !== null
       && now - eligibility.lastRecoveryAt < POST_FULLSCREEN_ROTATION_OVERFLOW_SCROLL_RECOVERY_COOLDOWN_MS) {
-      return false;
+      return reject("cooldown-active");
     }
 
     // Capture the orientation context before reading geometry. VisualViewport
@@ -12311,23 +12740,20 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
     } : null);
     if (!targetAuthority?.viewport
       || !viewportDimensionsMatch(layout, targetAuthority.viewport, VIEWPORT_GEOMETRY_TOLERANCE_PX)) {
-      return false;
+      return reject("target-unavailable-or-layout-mismatch");
     }
 
-    if (!viewportWidthsMatch(visible, targetAuthority.viewport)) return false;
+    if (!viewportWidthsMatch(visible, targetAuthority.viewport)) return reject("visible-width-mismatch");
     const heightGap = targetAuthority.viewport.height - visible.height;
     if (heightGap <= VIEWPORT_GEOMETRY_TOLERANCE_PX
-      || heightGap > BROWSER_UI_RESIDUAL_OCCLUSION_MAX_PX) return false;
+      || heightGap > BROWSER_UI_RESIDUAL_OCCLUSION_MAX_PX) return reject("residual-outside-range");
 
     const browserUiReappearanceEligible = triggerKind === "browser-ui"
-      // A completed rotation recovery remains the qualifying handoff even when
-      // its first finite A1+C pass ends short of the visible target. Every
-      // browser-UI execution gate below is still rechecked at event time.
       && eligibility.lastRotationRecoveryFinishedAt !== null
       && Boolean(eligibility.exitOrientation)
       && orientation !== eligibility.exitOrientation;
     if (triggerKind !== "rotation" && !browserUiReappearanceEligible) {
-      return false;
+      return reject("trigger-not-eligible");
     }
 
     eligibility.lastRecoveryAt = now;
@@ -12353,6 +12779,14 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
       savedStyles: null
     };
     postFullscreenWindowedRotationOverflowScrollRecovery = recovery;
+    recordTopEdgeObservation("post-fullscreen-recovery-scheduled", {
+      generation,
+      trigger,
+      triggerKind,
+      browserUiRetryAttempt: recovery.browserUiRetryAttempt,
+      heightGap: topEdgeObservationRound(heightGap),
+      targetSource: recovery.source
+    }, { measureShell: true });
     postFullscreenWindowedRotationOverflowScrollRecoveryTimer = setTimeout(
       () => runPostFullscreenWindowedRotationOverflowScrollRecovery(recovery),
       0
@@ -13362,15 +13796,31 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
   function scheduleFullscreenExitOrientationConflictRootResynchronization(conflict) {
     cancelFullscreenExitOrientationConflictRootResynchronization();
     const generation = fullscreenExitOrientationConflictRootResyncGeneration;
+    recordTopEdgeObservation("cp68-root-resync-series-scheduled", {
+      generation,
+      delays: [...FULLSCREEN_EXIT_ORIENTATION_CONFLICT_ROOT_RESYNC_DELAYS_MS]
+    });
 
     for (const delayMs of FULLSCREEN_EXIT_ORIENTATION_CONFLICT_ROOT_RESYNC_DELAYS_MS) {
       const timer = setTimeout(() => {
         fullscreenExitOrientationConflictRootResyncTimers.delete(timer);
-        if (generation !== fullscreenExitOrientationConflictRootResyncGeneration
-          || conflict !== fullscreenExitOrientationConflict) return;
-        if (rootOriginResyncBlockReason()
+        const generationMatches = generation === fullscreenExitOrientationConflictRootResyncGeneration;
+        const conflictMatches = conflict === fullscreenExitOrientationConflict;
+        if (!generationMatches || !conflictMatches) {
+          recordTopEdgeObservation("cp68-root-resync-skipped", {
+            delayMs,
+            reason: generationMatches ? "conflict-changed" : "generation-changed"
+          });
+          return;
+        }
+        const blockReason = rootOriginResyncBlockReason();
+        if (blockReason
           || isFullscreen()
           || isFullscreenTransitionActive()) {
+          recordTopEdgeObservation("cp68-root-resync-skipped", {
+            delayMs,
+            reason: blockReason || (isFullscreen() ? "fullscreen" : "fullscreen-transition")
+          }, { measureShell: true });
           cancelFullscreenExitOrientationConflictRootResynchronization();
           return;
         }
@@ -13378,8 +13828,15 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
         const layout = getViewportSize();
         const visible = getVisibleViewportSize();
         const displayed = getFullscreenExitOrientationConflictDisplayedViewport(layout, visible);
-        if (!displayed || conflict !== fullscreenExitOrientationConflict) return;
+        if (!displayed || conflict !== fullscreenExitOrientationConflict) {
+          recordTopEdgeObservation("cp68-root-resync-skipped", {
+            delayMs,
+            reason: "displayed-conflict-unavailable"
+          }, { measureShell: true });
+          return;
+        }
 
+        recordTopEdgeObservation("cp68-root-resync-requested", { delayMs }, { measureShell: true });
         scheduleLayoutUpdate();
         scheduleRootOriginResynchronization(
           `fullscreen-exit-orientation-conflict:${delayMs}ms`
@@ -13402,12 +13859,22 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
     };
     fullscreenExitOrientationConflict = conflict;
     document.documentElement.classList.add("fullscreen-exit-orientation-conflict-shell");
+    recordTopEdgeObservation("cp68-orientation-conflict-activated", {
+      target: topEdgeObservationViewportCopy(conflict.viewport),
+      orientation: conflict.orientation,
+      conflictingLayout: topEdgeObservationViewportCopy(conflict.conflictingLayout),
+      conflictingOrientation: conflict.conflictingOrientation
+    }, { measureShell: true });
     scheduleFullscreenExitOrientationConflictRootResynchronization(conflict);
   }
 
   function clearFullscreenExitOrientationConflict(reason = "cleared") {
     const conflict = fullscreenExitOrientationConflict;
     if (!conflict) return false;
+    recordTopEdgeObservation("cp68-orientation-conflict-clearing", {
+      reason,
+      activeForMs: topEdgeObservationRound(performance.now() - conflict.activatedAt)
+    }, { measureShell: true });
     fullscreenExitOrientationConflict = null;
     cancelFullscreenExitOrientationConflictRootResynchronization();
     document.documentElement.classList.remove("fullscreen-exit-orientation-conflict-shell");
@@ -13490,6 +13957,13 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
       orientationConflictCandidate: null,
       orientationConflictObserved: false
     };
+    recordTopEdgeObservation("fullscreen-exit-restore-started", {
+      orientation,
+      target: topEdgeObservationViewportCopy(fullscreenExitViewportRestore.windowedTarget),
+      targetSource: fullscreenExitViewportRestore.targetSource,
+      fullscreenViewport: topEdgeObservationViewportCopy(fullscreenSnapshot),
+      fullscreenVisibleViewport: topEdgeObservationViewportCopy(fullscreenExitViewportRestore.fullscreenVisibleViewport)
+    }, { measureShell: true });
     beginTransientViewportPaintSession(
       TransientViewportPaintReason.FULLSCREEN_EXIT,
       fullscreenSnapshot,
@@ -13523,6 +13997,15 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
     if (orientationConflict) {
       if (!restore.orientationConflictObserved) {
         restore.orientationConflictObserved = true;
+        recordTopEdgeObservation("cp68-orientation-conflict-observed", {
+          confirmable: orientationConflict.confirmable,
+          target: topEdgeObservationViewportCopy(orientationConflict.target),
+          targetOrientation: orientationConflict.targetOrientation,
+          layout: topEdgeObservationViewportCopy(orientationConflict.layout),
+          layoutOrientation: orientationConflict.layoutOrientation,
+          visible: topEdgeObservationViewportCopy(orientationConflict.visible),
+          inner: topEdgeObservationViewportCopy(orientationConflict.inner)
+        }, { measureShell: true });
       }
 
       if (!orientationConflict.confirmable) {
@@ -19834,7 +20317,11 @@ html.fullscreen-exit-orientation-conflict-shell body #editorStartRow > #beginBtn
   syncReducedEffectsClass();
   if (titleVersion) {
     titleVersion.textContent = APP_VERSION ? `v${APP_VERSION}` : "";
+    if (topEdgeObservationRun) {
+      titleVersion.textContent += "・T67-SR";
+    }
   }
+  installTopEdgeObservationDiagnostic();
   discardLegacyViewportDiagnostics();
   updateViewportCssVariables();
   setIconButton($("soundBtn"), state.soundOn ? iconMarkup.soundOn : iconMarkup.soundOff, state.soundOn ? "音を消す" : "音を出す", "音声");

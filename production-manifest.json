@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 2,
+  "kind": "production-deployment",
+  "application": {
+    "name": "Turn Order Spinner",
+    "version": "8.1.0"
+  },
+  "artifact": {
+    "path": "index.html",
+    "sha256": "697DC2BF861556C8FE8A9C3BB95800184C18ED8D9E219E8183B0F40DD046A15F",
+    "bytes": 716907
+  }
+}

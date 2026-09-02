@@ -1,0 +1,90 @@
+name: Deployment policy
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Production and privacy integrity
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out complete history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Synchronize actual tag refs
+        run: git fetch --force --prune --prune-tags origin '+refs/tags/*:refs/tags/*'
+
+      - name: Remove checkout credential
+        shell: bash
+        run: |
+          credential_key="http.${GITHUB_SERVER_URL}/.extraheader"
+          git config --local --unset-all "$credential_key"
+          if git config --local --name-only --get-regexp '^http\..*\.extraheader$'; then
+            echo "::error::An HTTP authentication header remains in local Git config."
+            exit 1
+          fi
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Validate public worktree
+        run: node scripts/check-publication-privacy.mjs --public-repo . --tree-kind production --worktree
+
+      - name: Validate complete public history and actual tags
+        shell: bash
+        env:
+          PRIVACY_GATE_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          mapfile -t published_tags < <(git for-each-ref --format='%(refname:strip=2)' refs/tags)
+          gate_args=(--public-repo . --tree-kind production --history "$PRIVACY_GATE_REVISION")
+          if (( ${#published_tags[@]} == 0 )); then
+            gate_args+=(--tags none)
+          else
+            for tag_name in "${published_tags[@]}"; do
+              gate_args+=(--tag "$tag_name")
+            done
+          fi
+          node scripts/check-publication-privacy.mjs "${gate_args[@]}"
+
+      - name: Validate operation script syntax
+        run: |
+          node --check scripts/build-pages-site.mjs
+          node --check scripts/check-deployment.mjs
+          node --check scripts/verify-pages-cleanup.mjs
+
+      - name: Validate deployment policy
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref || github.ref_name }}
+        run: node scripts/check-deployment.mjs
+
+  artifact-cycle:
+    name: Version preview artifact cycle
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Verify production, orphan preview, and cleanup cycle
+        run: node scripts/build-pages-site.mjs --self-test

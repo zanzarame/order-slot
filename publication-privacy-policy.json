@@ -1,0 +1,164 @@
+{
+  "schemaVersion": 2,
+  "publicRepository": "zanzarame/order-slot",
+  "publicPagesBaseUrl": "https://zanzarame.github.io/order-slot/",
+  "git": {
+    "minimumCommitTimestamp": "2026-09-01T00:00:00Z",
+    "requireSingleRoot": true,
+    "identities": [
+      {
+        "name": "okaka",
+        "email": "302712268+zanzarame@users.noreply.github.com",
+        "category": "human",
+        "roles": [
+          "author",
+          "committer",
+          "tagger"
+        ]
+      },
+      {
+        "name": "GitHub",
+        "email": "noreply@github.com",
+        "category": "system",
+        "roles": [
+          "committer"
+        ]
+      },
+      {
+        "name": "github-actions[bot]",
+        "email": "41898282+github-actions[bot]@users.noreply.github.com",
+        "category": "bot",
+        "roles": [
+          "author",
+          "committer"
+        ]
+      },
+      {
+        "name": "dependabot[bot]",
+        "email": "49699333+dependabot[bot]@users.noreply.github.com",
+        "category": "bot",
+        "roles": [
+          "author",
+          "committer"
+        ]
+      }
+    ]
+  },
+  "files": {
+    "treeKinds": {
+      "production": {
+        "allowedPaths": [
+          ".github/workflows/deployment-policy.yml",
+          ".github/workflows/pages-deploy.yml",
+          "LICENSE.md",
+          "README.md",
+          "index.html",
+          "publication-privacy-policy.json",
+          "production-manifest.json",
+          "scripts/build-pages-site.mjs",
+          "scripts/check-deployment.mjs",
+          "scripts/check-publication-privacy.mjs",
+          "scripts/verify-pages-cleanup.mjs"
+        ],
+        "requiredTipPaths": [
+          ".github/workflows/deployment-policy.yml",
+          ".github/workflows/pages-deploy.yml",
+          "LICENSE.md",
+          "README.md",
+          "index.html",
+          "publication-privacy-policy.json",
+          "production-manifest.json",
+          "scripts/build-pages-site.mjs",
+          "scripts/check-deployment.mjs",
+          "scripts/check-publication-privacy.mjs",
+          "scripts/verify-pages-cleanup.mjs"
+        ]
+      },
+      "preview": {
+        "allowedPaths": [
+          "index.html",
+          "manifest.json"
+        ],
+        "requiredTipPaths": [
+          "index.html",
+          "manifest.json"
+        ]
+      }
+    },
+    "allowedUrlPrefixes": [
+      "https://github.com/zanzarame/order-slot",
+      "https://polyformproject.org/licenses/noncommercial/1.0.0",
+      "https://zanzarame.github.io/order-slot/"
+    ],
+    "allowedRepositoryReferences": [
+      "zanzarame/order-slot"
+    ],
+    "allowedRepositoryBasenames": [
+      "order-slot"
+    ],
+    "allowedPathReferences": [
+      "refs/tags",
+      "usr/bin/env"
+    ],
+    "allowedPathReferencePrefixes": [
+      "preview/",
+      "refs/tags/"
+    ],
+    "allowedGitHubActions": [
+      "actions/checkout",
+      "actions/configure-pages",
+      "actions/deploy-pages",
+      "actions/setup-node",
+      "actions/upload-pages-artifact"
+    ],
+    "manifestSchemas": {
+      "production-manifest.json": {
+        "schemaVersion": 2,
+        "kind": "production-deployment",
+        "keys": {
+          "$": [
+            "application",
+            "artifact",
+            "kind",
+            "schemaVersion"
+          ],
+          "application": [
+            "name",
+            "version"
+          ],
+          "artifact": [
+            "bytes",
+            "path",
+            "sha256"
+          ]
+        }
+      },
+      "manifest.json": {
+        "schemaVersion": 2,
+        "kind": "release-preview",
+        "keys": {
+          "$": [
+            "application",
+            "artifact",
+            "kind",
+            "preview",
+            "schemaVersion"
+          ],
+          "application": [
+            "name",
+            "version"
+          ],
+          "artifact": [
+            "bytes",
+            "path",
+            "sha256"
+          ],
+          "preview": [
+            "path",
+            "url"
+          ]
+        }
+      }
+    }
+  }
+}

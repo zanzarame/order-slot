@@ -49,6 +49,7 @@
       "production": {
         "allowedPaths": [
           ".gitattributes",
+          ".github/dependabot.yml",
           ".github/workflows/deployment-policy.yml",
           ".github/workflows/pages-deploy.yml",
           "LICENSE.md",
@@ -63,6 +64,7 @@
         ],
         "requiredTipPaths": [
           ".gitattributes",
+          ".github/dependabot.yml",
           ".github/workflows/deployment-policy.yml",
           ".github/workflows/pages-deploy.yml",
           "LICENSE.md",

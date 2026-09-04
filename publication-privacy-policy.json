@@ -48,6 +48,7 @@
     "treeKinds": {
       "production": {
         "allowedPaths": [
+          ".gitattributes",
           ".github/workflows/deployment-policy.yml",
           ".github/workflows/pages-deploy.yml",
           "LICENSE.md",
@@ -61,6 +62,7 @@
           "scripts/verify-pages-cleanup.mjs"
         ],
         "requiredTipPaths": [
+          ".gitattributes",
           ".github/workflows/deployment-policy.yml",
           ".github/workflows/pages-deploy.yml",
           "LICENSE.md",

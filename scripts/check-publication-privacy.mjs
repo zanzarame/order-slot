@@ -52,6 +52,11 @@ const APPROVED_INDEX_ARTIFACTS = Object.freeze([
     bytes: 716907,
     sha256: "697DC2BF861556C8FE8A9C3BB95800184C18ED8D9E219E8183B0F40DD046A15F",
   }),
+  Object.freeze({
+    version: "8.1.12",
+    bytes: 691793,
+    sha256: "2E490062836662B76BE4E1416485972A9FDB2E455C08B6955615A8D75AC1B90B",
+  }),
 ]);
 
 export class PublicationPrivacyError extends Error {

@@ -39,7 +39,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: 22
+          node-version: 26
 
       - name: Validate public worktree
         run: node scripts/check-publication-privacy.mjs --public-repo . --tree-kind production --worktree
@@ -87,7 +87,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: 22
+          node-version: 26
 
       - name: Verify production, orphan preview, and cleanup cycle
         run: node scripts/build-pages-site.mjs --self-test

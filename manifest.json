@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 2,
+  "kind": "release-preview",
+  "application": {
+    "name": "Turn Order Spinner",
+    "version": "8.1.13"
+  },
+  "artifact": {
+    "path": "index.html",
+    "sha256": "02092FC4E91FF09BA99A0DC11F2A2BE33922F4DAD388EBD8B7F5186C50545AD9",
+    "bytes": 691884
+  },
+  "preview": {
+    "path": "preview/v8.1.13/index.html",
+    "url": "https://zanzarame.github.io/order-slot/preview/v8.1.13/"
+  }
+}
